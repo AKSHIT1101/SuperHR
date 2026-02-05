@@ -31,6 +31,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Event, EventAttendee, AudienceSegment, MessageTemplate } from '@/types/alumni';
 import { mockAlumni } from '@/data/mockData';
 import { cn } from '@/lib/utils';
+import { PersonSelector } from './PersonSelector';
 
 interface EventDetailDialogProps {
   event: Event | null;
@@ -755,147 +756,30 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
 
       {/* Add Attendees Dialog */}
       <Dialog open={showAddAttendeesDialog} onOpenChange={setShowAddAttendeesDialog}>
-        <DialogContent className="max-w-3xl h-[85vh] flex flex-col p-0">
-          <DialogHeader className="p-6 pb-4 shrink-0">
+        <DialogContent className="max-w-4xl h-[90vh] flex flex-col p-0">
+          <DialogHeader className="p-4 px-6 pb-0 shrink-0">
             <DialogTitle>Add Attendees</DialogTitle>
             <DialogDescription>Select from segments or individual alumni</DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-hidden flex flex-col px-6">
-            <Tabs value={addMode} onValueChange={(v) => setAddMode(v as any)} className="flex-1 flex flex-col overflow-hidden">
-              <TabsList className="shrink-0 mb-4">
-                <TabsTrigger value="segments">Audience Segments</TabsTrigger>
-                <TabsTrigger value="individuals">Individual Selection</TabsTrigger>
-              </TabsList>
+            <PersonSelector
+              selectedSegments={selectedSegments}
+              selectedIndividuals={selectedIndividuals}
+              onSegmentsChange={setSelectedSegments}
+              onIndividualsChange={setSelectedIndividuals}
+              audienceSegments={audienceSegments}
+              className="flex-1 min-h-0"
+            />
 
-              <TabsContent value="segments" className="flex-1 overflow-hidden flex flex-col mt-0">
-                {/* Segment Search */}
-                <div className="mb-4 shrink-0">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      placeholder="Search segments..."
-                      value={segmentSearch}
-                      onChange={(e) => setSegmentSearch(e.target.value)}
-                      className="pl-9"
-                    />
-                  </div>
-                </div>
-                <ScrollArea className="flex-1">
-                  <div className="space-y-2 pb-4">
-                    {filteredSegments.map((segment) => (
-                      <div
-                        key={segment.id}
-                        className={cn(
-                          'flex items-center justify-between p-4 rounded-lg border cursor-pointer hover:bg-muted',
-                          selectedSegments.includes(segment.id) && 'bg-primary/10 border-primary/20'
-                        )}
-                        onClick={() => toggleSegment(segment.id)}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Checkbox checked={selectedSegments.includes(segment.id)} />
-                          <div>
-                            <p className="font-medium">{segment.name}</p>
-                            <p className="text-sm text-muted-foreground">{segment.memberCount} members</p>
-                          </div>
-                        </div>
-                        <Badge variant="secondary">{segment.memberCount}</Badge>
-                      </div>
-                    ))}
-                    {filteredSegments.length === 0 && (
-                      <div className="text-center py-8 text-muted-foreground">
-                        <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                        <p>No segments found</p>
-                      </div>
-                    )}
-                  </div>
-                </ScrollArea>
-              </TabsContent>
-
-              <TabsContent value="individuals" className="flex-1 overflow-hidden flex flex-col mt-0">
-                {/* Filters */}
-                <div className="flex flex-wrap gap-2 mb-4 shrink-0">
-                  <div className="relative flex-1 min-w-[200px]">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      placeholder="Search alumni..."
-                      value={alumniSearch}
-                      onChange={(e) => setAlumniSearch(e.target.value)}
-                      className="pl-9"
-                    />
-                  </div>
-                  <Select value={filterLocation} onValueChange={setFilterLocation}>
-                    <SelectTrigger className="w-[120px]">
-                      <SelectValue placeholder="Location" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
-                      {locationOptions.map((loc) => (
-                        <SelectItem key={loc} value={loc}>{loc}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={filterDepartment} onValueChange={setFilterDepartment}>
-                    <SelectTrigger className="w-[120px]">
-                      <SelectValue placeholder="Dept" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
-                      {departmentOptions.map((d) => (
-                        <SelectItem key={d} value={d}>{d}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {(filterLocation !== 'all' || filterDepartment !== 'all' || filterType !== 'all') && (
-                    <Button variant="ghost" size="sm" onClick={clearFilters}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-
-                {/* Selection Actions */}
-                <div className="flex items-center justify-between mb-3 shrink-0">
-                  <Button variant="outline" size="sm" onClick={selectAllFiltered}>
-                    Select All ({filteredAlumni.length})
-                  </Button>
-                  <Badge variant="secondary">{selectedIndividuals.length} selected</Badge>
-                </div>
-
-                <ScrollArea className="flex-1 border rounded-lg">
-                  <div className="p-2 space-y-1">
-                    {filteredAlumni.map((alumni) => (
-                      <div
-                        key={alumni.id}
-                        className={cn(
-                          'flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-muted',
-                          selectedIndividuals.includes(alumni.id) && 'bg-primary/10'
-                        )}
-                        onClick={() => toggleIndividual(alumni.id)}
-                      >
-                        <Checkbox checked={selectedIndividuals.includes(alumni.id)} />
-                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                          <span className="text-xs font-medium">{alumni.firstName[0]}{alumni.lastName[0]}</span>
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-medium text-sm">{alumni.firstName} {alumni.lastName}</p>
-                          <p className="text-xs text-muted-foreground">{alumni.email}</p>
-                        </div>
-                        <Badge variant="outline" className="text-xs capitalize">{alumni.type}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </TabsContent>
-            </Tabs>
-
-            <div className="bg-muted/50 rounded-lg p-4 mt-4 shrink-0">
+            <div className="bg-muted/50 rounded-lg px-4 p-0 mt-2 shrink-0">
               <p className="font-medium">
                 Selected: {selectedSegments.length} segments, {selectedIndividuals.length} individuals
               </p>
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 p-6 pt-4 border-t shrink-0">
+          <div className="flex justify-end gap-3 px-6 p-2 pt-4 border-t shrink-0">
             <Button variant="outline" onClick={() => { setSelectedSegments([]); setSelectedIndividuals([]); setShowAddAttendeesDialog(false); }}>
               Cancel
             </Button>

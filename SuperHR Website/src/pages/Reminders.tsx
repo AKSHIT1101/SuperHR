@@ -296,20 +296,20 @@ export default function Reminders() {
               <CheckCircle className="h-5 w-5 text-success" />
               Complete Task
             </AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogDescription className='flex flex-wrap'>
               You're marking "{completingTask?.title}" as complete. What would you like to do?
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+          <AlertDialogFooter className="flex-wrap flex-col sm:flex-row gap-2">
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button variant="outline" onClick={() => handleCompleteTask(true, false)}>
-              Complete & Notify Manager
+              Notify Manager
             </Button>
             <Button variant="outline" onClick={() => handleCompleteTask(false, true)}>
-              Complete & Delete
+              Delete
             </Button>
             <AlertDialogAction onClick={() => handleCompleteTask(false, false)}>
-              Just Complete
+              Complete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

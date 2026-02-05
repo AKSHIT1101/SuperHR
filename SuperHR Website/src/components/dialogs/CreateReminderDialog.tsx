@@ -105,7 +105,7 @@ export function CreateReminderDialog({ open, onOpenChange, onSave }: CreateRemin
         </DialogHeader>
 
         <ScrollArea className="flex-1 min-h-0 px-6">
-          <div className="space-y-4 pb-6">
+          <div className="space-y-4 pb-6 px-1">
             <div className="space-y-2">
               <Label htmlFor="title">Title *</Label>
               <Input

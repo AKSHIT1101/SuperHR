@@ -87,7 +87,7 @@ export default function Auth() {
             A
           </div>
           <h1 className="text-2xl font-bold">AlumniConnect</h1>
-          <p className="text-muted-foreground mt-1">HR Alumni Management Portal</p>
+          <p className="text-muted-foreground mt-1">Employee Alumni Management Portal</p>
         </div>
 
         <Card className="border-0 shadow-xl">
@@ -188,10 +188,6 @@ export default function Auth() {
                     Microsoft
                   </Button>
                 </div>
-
-                <p className="text-center text-xs text-muted-foreground mt-4">
-                  Demo: Use password "password123" with any mock user email
-                </p>
               </TabsContent>
 
               <TabsContent value="signup" className="space-y-4">

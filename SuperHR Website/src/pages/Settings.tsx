@@ -113,12 +113,12 @@ export default function Settings() {
             <Shield className="h-4 w-4" />
             <span className="hidden sm:inline">Security</span>
           </TabsTrigger>
-          {isAdmin && (
+          {/* {isAdmin && (
             <TabsTrigger value="access" className="gap-2">
               <Users className="h-4 w-4" />
               <span className="hidden sm:inline">Access Control</span>
             </TabsTrigger>
-          )}
+          )} */}
         </TabsList>
 
         {isAdmin && (

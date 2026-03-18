@@ -1,0 +1,265 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* AI-first CRM design system */
+
+@layer base {
+  :root {
+    --background: 36 33% 97%;
+    --foreground: 24 20% 13%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 24 20% 13%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 20% 13%;
+
+    --primary: 24 95% 56%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 34 29% 92%;
+    --secondary-foreground: 24 18% 22%;
+
+    --muted: 36 24% 94%;
+    --muted-foreground: 24 10% 42%;
+
+    --accent: 28 96% 63%;
+    --accent-foreground: 24 20% 13%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 148 48% 38%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 36 90% 52%;
+    --warning-foreground: 24 20% 13%;
+
+    --info: 201 70% 46%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 30 21% 87%;
+    --input: 30 21% 87%;
+    --ring: 24 95% 56%;
+
+    --radius: 0.875rem;
+
+    --sidebar-background: 38 50% 99%;
+    --sidebar-foreground: 24 20% 13%;
+    --sidebar-primary: 24 95% 56%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 34 35% 94%;
+    --sidebar-accent-foreground: 24 20% 13%;
+    --sidebar-border: 30 21% 87%;
+    --sidebar-ring: 24 95% 56%;
+
+    --chart-1: 24 95% 56%;
+    --chart-2: 34 70% 56%;
+    --chart-3: 148 48% 38%;
+    --chart-4: 201 70% 46%;
+    --chart-5: 12 70% 52%;
+  }
+
+  .dark {
+    --background: 222 47% 8%;
+    --foreground: 210 20% 98%;
+    --card: 222 47% 11%;
+    --card-foreground: 210 20% 98%;
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 12 76% 61%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 210 20% 98%;
+    --success: 162 63% 35%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 45%;
+    --warning-foreground: 0 0% 100%;
+    --info: 199 89% 42%;
+    --info-foreground: 0 0% 100%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 217 91% 60%;
+    --sidebar-background: 222 47% 8%;
+    --sidebar-foreground: 210 20% 98%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 217 33% 17%;
+    --sidebar-accent-foreground: 210 20% 98%;
+    --sidebar-border: 217 33% 17%;
+    --sidebar-ring: 217 91% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full hover:bg-muted-foreground/30;
+  }
+}
+
+@layer components {
+  .crm-shell {
+    background:
+      radial-gradient(circle at top right, hsl(var(--accent) / 0.16), transparent 28%),
+      radial-gradient(circle at top left, hsl(var(--primary) / 0.08), transparent 22%),
+      hsl(var(--background));
+  }
+
+  .metric-card {
+    @apply relative overflow-hidden transition-all duration-300;
+  }
+
+  .metric-card::before {
+    content: '';
+    @apply absolute inset-0 opacity-0 transition-opacity duration-300;
+    background: linear-gradient(135deg, hsl(var(--accent) / 0.12), transparent 55%);
+  }
+
+  .metric-card:hover::before {
+    @apply opacity-100;
+  }
+
+  .ai-pulse {
+    animation: ai-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes ai-pulse {
+    0%, 100% {
+      box-shadow: 0 0 0 0 hsl(var(--primary) / 0.35);
+    }
+    50% {
+      box-shadow: 0 0 0 10px hsl(var(--primary) / 0);
+    }
+  }
+
+  .status-active {
+    @apply border-success/20 bg-success/10 text-success;
+  }
+
+  .status-inactive {
+    @apply border-border bg-muted text-muted-foreground;
+  }
+
+  .status-pending {
+    @apply border-warning/20 bg-warning/10 text-warning;
+  }
+
+  .table-row-interactive {
+    @apply cursor-pointer transition-colors hover:bg-muted/50;
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--foreground)), hsl(var(--primary)));
+  }
+
+  .alert-banner {
+    @apply relative overflow-hidden border border-warning/20;
+    background: linear-gradient(90deg, hsl(var(--accent) / 0.18), hsl(var(--background)) 65%);
+  }
+
+  .alert-banner::before {
+    content: '';
+    @apply absolute bottom-0 left-0 top-0 w-1;
+    background: hsl(var(--primary));
+  }
+
+  .nudge-card {
+    @apply relative border-l-4 border-l-primary bg-primary/5;
+  }
+
+  .chart-container {
+    @apply rounded-xl border bg-card p-6 shadow-sm;
+  }
+
+  .dialog-shell {
+    @apply flex h-full min-h-0 flex-col overflow-hidden;
+  }
+
+  .dialog-header-tight {
+    @apply shrink-0 border-b px-6 pb-3 pt-5;
+  }
+
+  .dialog-body-scroll {
+    @apply min-h-0 flex-1 overflow-hidden;
+  }
+
+  .dialog-footer-bar {
+    @apply shrink-0 border-t bg-card px-6 py-4;
+  }
+
+  .dialog-side-panel {
+    @apply border-l bg-muted/50;
+  }
+}
+
+@layer utilities {
+  /* Fade In Animation */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Slide In From Right */
+  .animate-slide-in {
+    animation: slideIn 0.3s ease-out;
+  }
+
+  @keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  /* Stagger children animations */
+  .stagger-children > * {
+    animation: fadeIn 0.3s ease-out both;
+  }
+
+  .stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger-children > *:nth-child(2) { animation-delay: 50ms; }
+  .stagger-children > *:nth-child(3) { animation-delay: 100ms; }
+  .stagger-children > *:nth-child(4) { animation-delay: 150ms; }
+  .stagger-children > *:nth-child(5) { animation-delay: 200ms; }
+  .stagger-children > *:nth-child(6) { animation-delay: 250ms; }
+}

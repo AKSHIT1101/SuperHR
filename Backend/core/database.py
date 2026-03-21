@@ -84,6 +84,21 @@ class DatabaseManager:
         conn = self.get_connection()
         cur = conn.cursor()
         try:
+            def _column_exists(table: str, column: str) -> bool:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = %s AND column_name = %s
+                    """,
+                    (table, column),
+                )
+                return cur.fetchone() is not None
+
+            def _add_column_if_missing(table: str, column: str, definition: str) -> None:
+                if not _column_exists(table, column):
+                    cur.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+
             # 1. Organizations (one per admin — the tenant root)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS organizations (
@@ -129,8 +144,11 @@ class DatabaseManager:
                     role            VARCHAR(20) NOT NULL DEFAULT 'user'
                                         CHECK (role IN ('manager', 'user')),
                     token           VARCHAR(512) NOT NULL UNIQUE,
+                    status          VARCHAR(20) NOT NULL DEFAULT 'pending'
+                                        CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
                     used            BOOLEAN NOT NULL DEFAULT FALSE,
                     expires_at      TIMESTAMP NOT NULL DEFAULT (NOW() + INTERVAL '7 days'),
+                    responded_at    TIMESTAMP,
                     created_at      TIMESTAMP DEFAULT NOW(),
                     updated_at      TIMESTAMP DEFAULT NOW(),
                     UNIQUE (org_id, email)
@@ -142,6 +160,10 @@ class DatabaseManager:
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(email)
             """)
+
+            # Backfill/idempotent adds for older DBs
+            _add_column_if_missing("invitations", "status", "VARCHAR(20) NOT NULL DEFAULT 'pending'")
+            _add_column_if_missing("invitations", "responded_at", "TIMESTAMP")
 
             # 4. Contact Attribute Definitions (LLM-decided schema per org)
             # field_type: text | number | date | boolean
@@ -248,6 +270,20 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_segments_org_id ON segments(org_id)
             """)
 
+            # 8.1 Segment Name Embeddings (used to resolve "students"/etc from prompts)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS segment_embeddings (
+                    org_id          BIGINT NOT NULL REFERENCES organizations(org_id) ON DELETE CASCADE,
+                    segment_id     BIGINT NOT NULL REFERENCES segments(segment_id) ON DELETE CASCADE,
+                    embedding       BYTEA NOT NULL,
+                    updated_at     TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (org_id, segment_id)
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_segment_embeddings_org_id ON segment_embeddings(org_id)
+            """)
+
             # 9. Segment ↔ Contact
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS segment_contacts (
@@ -276,6 +312,36 @@ class DatabaseManager:
             """)
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_campaigns_org_id ON campaigns(org_id)
+            """)
+
+            # Track-only communications fields (idempotent)
+            _add_column_if_missing("campaigns", "channel", "VARCHAR(20)")
+            _add_column_if_missing("campaigns", "subject", "TEXT")
+            _add_column_if_missing("campaigns", "content", "TEXT")
+            _add_column_if_missing("campaigns", "sender_label", "TEXT")
+            _add_column_if_missing("campaigns", "sender_address", "TEXT")
+            _add_column_if_missing("campaigns", "scheduled_at", "TIMESTAMP")
+            _add_column_if_missing("campaigns", "sent_at", "TIMESTAMP")
+            _add_column_if_missing("campaigns", "sent_count", "INTEGER NOT NULL DEFAULT 0")
+            _add_column_if_missing("campaigns", "open_count", "INTEGER NOT NULL DEFAULT 0")
+            _add_column_if_missing("campaigns", "click_count", "INTEGER NOT NULL DEFAULT 0")
+
+            # Templates for communications (optional but useful for non-AI workflow)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS message_templates (
+                    template_id     BIGSERIAL PRIMARY KEY,
+                    org_id          BIGINT NOT NULL REFERENCES organizations(org_id) ON DELETE CASCADE,
+                    type            VARCHAR(20) NOT NULL CHECK (type IN ('email', 'whatsapp')),
+                    name            VARCHAR(255) NOT NULL,
+                    subject         TEXT,
+                    content         TEXT NOT NULL,
+                    created_by      BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+                    created_at      TIMESTAMP DEFAULT NOW(),
+                    updated_at      TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_templates_org_id ON message_templates(org_id)
             """)
 
             # 11. Campaign ↔ Contact
@@ -310,6 +376,20 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_events_org_id ON events(org_id)
             """)
 
+            # 12.1 Event Name Embeddings (used to resolve "convocation"/etc from prompts)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS event_embeddings (
+                    org_id          BIGINT NOT NULL REFERENCES organizations(org_id) ON DELETE CASCADE,
+                    event_id       BIGINT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+                    embedding       BYTEA NOT NULL,
+                    updated_at     TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (org_id, event_id)
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_event_embeddings_org_id ON event_embeddings(org_id)
+            """)
+
             # 13. Event ↔ Contact
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS event_contacts (
@@ -317,10 +397,16 @@ class DatabaseManager:
                     contact_id      BIGINT NOT NULL REFERENCES contacts(contact_id) ON DELETE CASCADE,
                     rsvp_status     VARCHAR(20) DEFAULT 'invited'
                                         CHECK (rsvp_status IN ('invited', 'attending', 'declined', 'maybe')),
+                    email_invite_sent BOOLEAN NOT NULL DEFAULT FALSE,
+                    whatsapp_invite_sent BOOLEAN NOT NULL DEFAULT FALSE,
                     added_at        TIMESTAMP DEFAULT NOW(),
                     PRIMARY KEY (event_id, contact_id)
                 )
             """)
+
+            # Backfill invite notification flags on existing databases.
+            _add_column_if_missing('event_contacts', 'email_invite_sent', 'BOOLEAN NOT NULL DEFAULT FALSE')
+            _add_column_if_missing('event_contacts', 'whatsapp_invite_sent', 'BOOLEAN NOT NULL DEFAULT FALSE')
 
             # 14. Reminders
             cur.execute("""
@@ -428,6 +514,25 @@ class DatabaseManager:
         except Exception as e:
             conn.rollback()
             logger.error(f"Batch insert error: {e}")
+            raise
+        finally:
+            cur.close()
+            self.return_connection(conn)
+
+    def execute_transaction(self, fn):
+        """
+        Runs `fn(cur)` inside a single DB transaction and returns its result.
+        Use this when multiple statements must be atomic.
+        """
+        conn = self.get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            result = fn(cur)
+            conn.commit()
+            return result
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Transaction error: {e}")
             raise
         finally:
             cur.close()
@@ -778,6 +883,230 @@ class DatabaseManager:
         return results[:top_k]
 
     # ------------------------------------------------------------------ #
+    #  Segment / Event Name Embeddings                                   #
+    # ------------------------------------------------------------------ #
+
+    def upsert_segment_embedding(
+        self,
+        org_id: int,
+        segment_id: int,
+        embedding: List[float],
+    ) -> None:
+        import pickle
+        import numpy as np
+
+        emb_bytes = pickle.dumps(np.array(embedding, dtype="float32"))
+        self.execute_query(
+            """
+            INSERT INTO segment_embeddings (org_id, segment_id, embedding, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (org_id, segment_id) DO UPDATE
+                SET embedding = EXCLUDED.embedding, updated_at = NOW()
+            """,
+            (org_id, segment_id, emb_bytes),
+            fetch="none",
+        )
+
+    def upsert_event_embedding(
+        self,
+        org_id: int,
+        event_id: int,
+        embedding: List[float],
+    ) -> None:
+        import pickle
+        import numpy as np
+
+        emb_bytes = pickle.dumps(np.array(embedding, dtype="float32"))
+        self.execute_query(
+            """
+            INSERT INTO event_embeddings (org_id, event_id, embedding, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (org_id, event_id) DO UPDATE
+                SET embedding = EXCLUDED.embedding, updated_at = NOW()
+            """,
+            (org_id, event_id, emb_bytes),
+            fetch="none",
+        )
+
+    def _lazy_backfill_segment_embeddings(self, org_id: int) -> None:
+        """
+        Existing deployments may have segments but no vectors yet.
+        This makes the feature work without requiring a manual migration run.
+        """
+        from core.embeddings import embed_text
+
+        rows = self.execute_query(
+            "SELECT segment_id, name, description, prompt FROM segments WHERE org_id = %s",
+            (org_id,),
+            fetch="all",
+        )
+        if not rows:
+            return
+
+        for r in rows:
+            text = f"{r.get('name') or ''}\n{r.get('description') or ''}\n{r.get('prompt') or ''}".strip()
+            vec = embed_text(text)
+            self.upsert_segment_embedding(org_id=org_id, segment_id=r["segment_id"], embedding=vec)
+
+    def _lazy_backfill_event_embeddings(self, org_id: int) -> None:
+        from core.embeddings import embed_text
+
+        rows = self.execute_query(
+            "SELECT event_id, name, description, location, prompt FROM events WHERE org_id = %s",
+            (org_id,),
+            fetch="all",
+        )
+        if not rows:
+            return
+
+        for r in rows:
+            text = (
+                f"{r.get('name') or ''}\n"
+                f"{r.get('description') or ''}\n"
+                f"{r.get('location') or ''}\n"
+                f"{r.get('prompt') or ''}"
+            ).strip()
+            vec = embed_text(text)
+            self.upsert_event_embedding(org_id=org_id, event_id=r["event_id"], embedding=vec)
+
+    def semantic_search_segments(
+        self,
+        org_id: int,
+        query_embedding: List[float],
+        top_k: int = 10,
+        similarity_threshold: float = 0.40,
+    ) -> List[Dict]:
+        import pickle
+        import numpy as np
+
+        rows = self.execute_query(
+            """
+            SELECT segment_id, embedding
+            FROM segment_embeddings
+            WHERE org_id = %s
+            """,
+            (org_id,),
+            fetch="all",
+        )
+
+        # Lazy backfill if needed.
+        if not rows:
+            self._lazy_backfill_segment_embeddings(org_id=org_id)
+            rows = self.execute_query(
+                """
+                SELECT segment_id, embedding
+                FROM segment_embeddings
+                WHERE org_id = %s
+                """,
+                (org_id,),
+                fetch="all",
+            )
+
+        if not rows:
+            return []
+
+        segment_ids = [r["segment_id"] for r in rows]
+        matrix = np.array(
+            [pickle.loads(bytes(r["embedding"])) for r in rows],
+            dtype="float32",
+        )
+
+        q = np.array(query_embedding, dtype="float32")
+        q_norm = np.linalg.norm(q)
+        if q_norm == 0:
+            return []
+
+        row_norms = np.linalg.norm(matrix, axis=1)
+        row_norms[row_norms == 0] = 1e-10
+        similarities = matrix.dot(q) / (row_norms * q_norm)
+
+        results = [
+            {"segment_id": segment_ids[i], "similarity": float(similarities[i])}
+            for i in range(len(similarities))
+            if similarities[i] >= similarity_threshold
+        ]
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:top_k]
+
+    def semantic_search_events(
+        self,
+        org_id: int,
+        query_embedding: List[float],
+        top_k: int = 10,
+        similarity_threshold: float = 0.40,
+    ) -> List[Dict]:
+        import pickle
+        import numpy as np
+
+        rows = self.execute_query(
+            """
+            SELECT event_id, embedding
+            FROM event_embeddings
+            WHERE org_id = %s
+            """,
+            (org_id,),
+            fetch="all",
+        )
+
+        if not rows:
+            self._lazy_backfill_event_embeddings(org_id=org_id)
+            rows = self.execute_query(
+                """
+                SELECT event_id, embedding
+                FROM event_embeddings
+                WHERE org_id = %s
+                """,
+                (org_id,),
+                fetch="all",
+            )
+
+        if not rows:
+            return []
+
+        event_ids = [r["event_id"] for r in rows]
+        matrix = np.array(
+            [pickle.loads(bytes(r["embedding"])) for r in rows],
+            dtype="float32",
+        )
+
+        q = np.array(query_embedding, dtype="float32")
+        q_norm = np.linalg.norm(q)
+        if q_norm == 0:
+            return []
+
+        row_norms = np.linalg.norm(matrix, axis=1)
+        row_norms[row_norms == 0] = 1e-10
+        similarities = matrix.dot(q) / (row_norms * q_norm)
+
+        results = [
+            {"event_id": event_ids[i], "similarity": float(similarities[i])}
+            for i in range(len(similarities))
+            if similarities[i] >= similarity_threshold
+        ]
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:top_k]
+
+    def get_contacts_in_segments(
+        self,
+        org_id: int,
+        segment_ids: List[int],
+    ) -> List[Dict]:
+        if not segment_ids:
+            return []
+        return self.execute_query(
+            """
+            SELECT DISTINCT c.contact_id, c.first_name, c.last_name, c.email, c.phone, c.created_at
+            FROM segment_contacts sc
+            JOIN contacts c ON c.contact_id = sc.contact_id
+            WHERE sc.segment_id = ANY(%s)
+              AND c.org_id = %s
+            ORDER BY c.last_name, c.first_name
+            """,
+            (segment_ids, org_id),
+            fetch="all",
+        )
+
+    # ------------------------------------------------------------------ #
     #  Segments                                                            #
     # ------------------------------------------------------------------ #
 
@@ -847,6 +1176,58 @@ class DatabaseManager:
         )
         return result is not None
 
+    def update_segment(
+        self,
+        segment_id: int,
+        org_id: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        contact_ids: Optional[List[int]] = None,
+    ) -> Optional[Dict]:
+        def _tx(cur):
+            cur.execute(
+                "SELECT segment_id FROM segments WHERE segment_id = %s AND org_id = %s",
+                (segment_id, org_id),
+            )
+            if not cur.fetchone():
+                return None
+
+            updates = {}
+            if name is not None:
+                updates["name"] = name
+            if description is not None:
+                updates["description"] = description
+
+            if updates:
+                set_clause = ", ".join(f"{k} = %s" for k in updates)
+                params = list(updates.values()) + [segment_id, org_id]
+                cur.execute(
+                    f"UPDATE segments SET {set_clause}, updated_at = NOW() "
+                    f"WHERE segment_id = %s AND org_id = %s RETURNING *",
+                    tuple(params),
+                )
+                segment = cur.fetchone()
+            else:
+                cur.execute(
+                    "SELECT * FROM segments WHERE segment_id = %s AND org_id = %s",
+                    (segment_id, org_id),
+                )
+                segment = cur.fetchone()
+
+            if contact_ids is not None:
+                cur.execute("DELETE FROM segment_contacts WHERE segment_id = %s", (segment_id,))
+                if contact_ids:
+                    execute_values(
+                        cur,
+                        "INSERT INTO segment_contacts (segment_id, contact_id) VALUES %s "
+                        "ON CONFLICT DO NOTHING",
+                        [(segment_id, cid) for cid in contact_ids],
+                    )
+
+            return dict(segment) if segment else None
+
+        return self.execute_transaction(_tx)
+
     # ------------------------------------------------------------------ #
     #  Campaigns                                                           #
     # ------------------------------------------------------------------ #
@@ -858,17 +1239,48 @@ class DatabaseManager:
         description: str = None,
         prompt: str = None,
         query_plan: dict = None,
+        channel: str = None,
+        subject: str = None,
+        content: str = None,
+        sender_label: str = None,
+        sender_address: str = None,
+        scheduled_at=None,
+        sent_at=None,
+        sent_count: int = 0,
+        open_count: int = 0,
+        click_count: int = 0,
         created_by: int = None,
         contact_ids: List[int] = None,
     ) -> Dict:
         campaign = self.execute_query(
             """
-            INSERT INTO campaigns (org_id, name, description, prompt, query_plan, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO campaigns (
+                org_id, name, description, prompt, query_plan,
+                channel, subject, content, sender_label, sender_address,
+                scheduled_at, sent_at, sent_count, open_count, click_count,
+                created_by
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
-            (org_id, name, description, prompt,
-             json.dumps(query_plan) if query_plan else None, created_by),
+            (
+                org_id,
+                name,
+                description,
+                prompt,
+                json.dumps(query_plan) if query_plan else None,
+                channel,
+                subject,
+                content,
+                sender_label,
+                sender_address,
+                scheduled_at,
+                sent_at,
+                sent_count or 0,
+                open_count or 0,
+                click_count or 0,
+                created_by,
+            ),
             fetch="one",
         )
         if contact_ids:
@@ -925,6 +1337,292 @@ class DatabaseManager:
             (campaign_id, org_id), fetch="one",
         )
         return result is not None
+
+    def update_campaign(
+        self,
+        campaign_id: int,
+        org_id: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        status: Optional[str] = None,
+        channel: Optional[str] = None,
+        subject: Optional[str] = None,
+        content: Optional[str] = None,
+        sender_label: Optional[str] = None,
+        sender_address: Optional[str] = None,
+        scheduled_at=None,
+        sent_at=None,
+        sent_count: Optional[int] = None,
+        open_count: Optional[int] = None,
+        click_count: Optional[int] = None,
+        contact_ids: Optional[List[int]] = None,
+    ) -> Optional[Dict]:
+        def _tx(cur):
+            cur.execute(
+                "SELECT campaign_id FROM campaigns WHERE campaign_id = %s AND org_id = %s",
+                (campaign_id, org_id),
+            )
+            if not cur.fetchone():
+                return None
+
+            updates = {}
+            if name is not None:
+                updates["name"] = name
+            if description is not None:
+                updates["description"] = description
+            if status is not None:
+                updates["status"] = status
+            if channel is not None:
+                updates["channel"] = channel
+            if subject is not None:
+                updates["subject"] = subject
+            if content is not None:
+                updates["content"] = content
+            if sender_label is not None:
+                updates["sender_label"] = sender_label
+            if sender_address is not None:
+                updates["sender_address"] = sender_address
+            if scheduled_at is not None:
+                updates["scheduled_at"] = scheduled_at
+            if sent_at is not None:
+                updates["sent_at"] = sent_at
+            if sent_count is not None:
+                updates["sent_count"] = sent_count
+            if open_count is not None:
+                updates["open_count"] = open_count
+            if click_count is not None:
+                updates["click_count"] = click_count
+
+            if updates:
+                set_clause = ", ".join(f"{k} = %s" for k in updates)
+                params = list(updates.values()) + [campaign_id, org_id]
+                cur.execute(
+                    f"UPDATE campaigns SET {set_clause}, updated_at = NOW() "
+                    f"WHERE campaign_id = %s AND org_id = %s RETURNING *",
+                    tuple(params),
+                )
+                campaign = cur.fetchone()
+            else:
+                cur.execute(
+                    "SELECT * FROM campaigns WHERE campaign_id = %s AND org_id = %s",
+                    (campaign_id, org_id),
+                )
+                campaign = cur.fetchone()
+
+            if contact_ids is not None:
+                cur.execute("DELETE FROM campaign_contacts WHERE campaign_id = %s", (campaign_id,))
+                if contact_ids:
+                    execute_values(
+                        cur,
+                        "INSERT INTO campaign_contacts (campaign_id, contact_id) VALUES %s "
+                        "ON CONFLICT DO NOTHING",
+                        [(campaign_id, cid) for cid in contact_ids],
+                    )
+
+            return dict(campaign) if campaign else None
+
+        return self.execute_transaction(_tx)
+
+    # ------------------------------------------------------------------ #
+    #  Message Templates                                                   #
+    # ------------------------------------------------------------------ #
+
+    def get_templates(self, org_id: int, type: Optional[str] = None) -> List[Dict]:
+        if type:
+            return self.execute_query(
+                "SELECT * FROM message_templates WHERE org_id = %s AND type = %s ORDER BY created_at DESC",
+                (org_id, type),
+                fetch="all",
+            )
+        return self.execute_query(
+            "SELECT * FROM message_templates WHERE org_id = %s ORDER BY created_at DESC",
+            (org_id,),
+            fetch="all",
+        )
+
+    def create_template(
+        self,
+        org_id: int,
+        created_by: int,
+        type: str,
+        name: str,
+        content: str,
+        subject: Optional[str] = None,
+    ) -> Dict:
+        return self.execute_query(
+            """
+            INSERT INTO message_templates (org_id, type, name, subject, content, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (org_id, type, name, subject, content, created_by),
+            fetch="one",
+        )
+
+    def update_template(
+        self,
+        template_id: int,
+        org_id: int,
+        name: Optional[str] = None,
+        subject: Optional[str] = None,
+        content: Optional[str] = None,
+    ) -> Optional[Dict]:
+        updates = {}
+        if name is not None:
+            updates["name"] = name
+        if subject is not None:
+            updates["subject"] = subject
+        if content is not None:
+            updates["content"] = content
+        if not updates:
+            return self.execute_query(
+                "SELECT * FROM message_templates WHERE template_id = %s AND org_id = %s",
+                (template_id, org_id),
+                fetch="one",
+            )
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        return self.execute_query(
+            f"UPDATE message_templates SET {set_clause}, updated_at = NOW() "
+            f"WHERE template_id = %s AND org_id = %s RETURNING *",
+            (*updates.values(), template_id, org_id),
+            fetch="one",
+        )
+
+    def delete_template(self, template_id: int, org_id: int) -> bool:
+        row = self.execute_query(
+            "DELETE FROM message_templates WHERE template_id = %s AND org_id = %s RETURNING template_id",
+            (template_id, org_id),
+            fetch="one",
+        )
+        return row is not None
+
+    # ------------------------------------------------------------------ #
+    #  Analytics                                                           #
+    # ------------------------------------------------------------------ #
+
+    def get_overview_metrics(self, org_id: int, user_id: int) -> Dict:
+        contacts = self.count_contacts(org_id)
+
+        segments_row = self.execute_query(
+            "SELECT COUNT(*) AS cnt FROM segments WHERE org_id = %s",
+            (org_id,),
+            fetch="one",
+        )
+        segments = segments_row["cnt"] if segments_row else 0
+
+        campaigns_row = self.execute_query(
+            "SELECT COUNT(*) AS cnt FROM campaigns WHERE org_id = %s",
+            (org_id,),
+            fetch="one",
+        )
+        campaigns_total = campaigns_row["cnt"] if campaigns_row else 0
+
+        events_row = self.execute_query(
+            """
+            SELECT
+              COUNT(*) FILTER (WHERE status IN ('scheduled') AND event_date IS NOT NULL AND event_date >= NOW()) AS upcoming,
+              COUNT(*) FILTER (WHERE status = 'completed') AS completed
+            FROM events
+            WHERE org_id = %s
+            """,
+            (org_id,),
+            fetch="one",
+        ) or {"upcoming": 0, "completed": 0}
+
+        reminders_row = self.execute_query(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM reminders
+            WHERE org_id = %s
+              AND (created_by = %s OR assigned_to = %s)
+              AND is_done = FALSE
+            """,
+            (org_id, user_id, user_id),
+            fetch="one",
+        )
+        reminders_open = reminders_row["cnt"] if reminders_row else 0
+
+        campaigns_by_channel = self.execute_query(
+            """
+            SELECT COALESCE(channel, 'unknown') AS channel, COUNT(*) AS cnt
+            FROM campaigns
+            WHERE org_id = %s
+            GROUP BY COALESCE(channel, 'unknown')
+            ORDER BY cnt DESC
+            """,
+            (org_id,),
+            fetch="all",
+        )
+
+        campaigns_by_status = self.execute_query(
+            """
+            SELECT status, COUNT(*) AS cnt
+            FROM campaigns
+            WHERE org_id = %s
+            GROUP BY status
+            ORDER BY cnt DESC
+            """,
+            (org_id,),
+            fetch="all",
+        )
+
+        return {
+            "contacts": contacts,
+            "segments": segments,
+            "campaigns_total": campaigns_total,
+            "events_upcoming": int(events_row.get("upcoming") or 0),
+            "events_completed": int(events_row.get("completed") or 0),
+            "reminders_open": reminders_open,
+            "campaigns_by_channel": campaigns_by_channel,
+            "campaigns_by_status": campaigns_by_status,
+        }
+
+    def get_timeseries(
+        self,
+        org_id: int,
+        metric: str,
+        bucket: str,
+        start_iso: str,
+        end_iso: str,
+    ) -> List[Dict]:
+        if bucket not in ("day", "week", "month"):
+            raise ValueError("bucket must be day|week|month")
+
+        if metric == "contacts_created":
+            table = "contacts"
+            col = "created_at"
+            extra_where = ""
+        elif metric == "campaigns_sent":
+            table = "campaigns"
+            col = "sent_at"
+            extra_where = "AND sent_at IS NOT NULL"
+        elif metric == "events_created":
+            table = "events"
+            col = "created_at"
+            extra_where = ""
+        elif metric == "reminders_created":
+            table = "reminders"
+            col = "created_at"
+            extra_where = ""
+        else:
+            raise ValueError("unsupported metric")
+
+        return self.execute_query(
+            f"""
+            SELECT
+              date_trunc(%s, {col}) AS bucket,
+              COUNT(*) AS value
+            FROM {table}
+            WHERE org_id = %s
+              AND {col} >= %s
+              AND {col} < %s
+              {extra_where}
+            GROUP BY date_trunc(%s, {col})
+            ORDER BY bucket ASC
+            """,
+            (bucket, org_id, start_iso, end_iso, bucket),
+            fetch="all",
+        )
 
     # ------------------------------------------------------------------ #
     #  Events                                                              #
@@ -984,7 +1682,9 @@ class DatabaseManager:
         return self.execute_query(
             """
             SELECT c.contact_id, c.first_name, c.last_name, c.email, c.phone,
-                   ec.rsvp_status
+                   ec.rsvp_status,
+                   ec.email_invite_sent,
+                   ec.whatsapp_invite_sent
             FROM event_contacts ec
             JOIN contacts c ON ec.contact_id = c.contact_id
             WHERE ec.event_id = %s AND c.org_id = %s
@@ -994,12 +1694,54 @@ class DatabaseManager:
         )
 
     def update_event_rsvp(
-        self, event_id: int, contact_id: int, rsvp_status: str
+        self, event_id: int, org_id: int, contact_id: int, rsvp_status: str
     ) -> None:
         self.execute_query(
-            "UPDATE event_contacts SET rsvp_status = %s "
-            "WHERE event_id = %s AND contact_id = %s",
-            (rsvp_status, event_id, contact_id), fetch="none",
+            """
+            UPDATE event_contacts ec
+            SET rsvp_status = %s
+            FROM events e
+            JOIN contacts c ON c.contact_id = ec.contact_id
+            WHERE ec.event_id = e.event_id
+              AND ec.event_id = %s
+              AND ec.contact_id = %s
+              AND e.org_id = %s
+              AND c.org_id = %s
+            """,
+            (rsvp_status, event_id, contact_id, org_id, org_id),
+            fetch="none",
+        )
+
+    def update_event_invite_sent(
+        self,
+        event_id: int,
+        org_id: int,
+        contact_id: int,
+        channel: str,  # 'email' | 'whatsapp'
+        sent: bool = True,
+    ) -> None:
+        col = None
+        if channel == 'email':
+            col = 'email_invite_sent'
+        elif channel == 'whatsapp':
+            col = 'whatsapp_invite_sent'
+        else:
+            raise ValueError("channel must be 'email' or 'whatsapp'")
+
+        self.execute_query(
+            f"""
+            UPDATE event_contacts ec
+            SET {col} = %s
+            FROM events e
+            JOIN contacts c ON c.contact_id = ec.contact_id
+            WHERE ec.event_id = e.event_id
+              AND ec.event_id = %s
+              AND ec.contact_id = %s
+              AND e.org_id = %s
+              AND c.org_id = %s
+            """,
+            (sent, event_id, contact_id, org_id, org_id),
+            fetch="none",
         )
 
     def delete_event(self, event_id: int, org_id: int) -> bool:
@@ -1008,6 +1750,67 @@ class DatabaseManager:
             (event_id, org_id), fetch="one",
         )
         return result is not None
+
+    def update_event(
+        self,
+        event_id: int,
+        org_id: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        event_date=None,
+        status: Optional[str] = None,
+        contact_ids: Optional[List[int]] = None,
+    ) -> Optional[Dict]:
+        def _tx(cur):
+            cur.execute(
+                "SELECT event_id FROM events WHERE event_id = %s AND org_id = %s",
+                (event_id, org_id),
+            )
+            if not cur.fetchone():
+                return None
+
+            updates = {}
+            if name is not None:
+                updates["name"] = name
+            if description is not None:
+                updates["description"] = description
+            if location is not None:
+                updates["location"] = location
+            if event_date is not None:
+                updates["event_date"] = event_date
+            if status is not None:
+                updates["status"] = status
+
+            if updates:
+                set_clause = ", ".join(f"{k} = %s" for k in updates)
+                params = list(updates.values()) + [event_id, org_id]
+                cur.execute(
+                    f"UPDATE events SET {set_clause}, updated_at = NOW() "
+                    f"WHERE event_id = %s AND org_id = %s RETURNING *",
+                    tuple(params),
+                )
+                event = cur.fetchone()
+            else:
+                cur.execute(
+                    "SELECT * FROM events WHERE event_id = %s AND org_id = %s",
+                    (event_id, org_id),
+                )
+                event = cur.fetchone()
+
+            if contact_ids is not None:
+                cur.execute("DELETE FROM event_contacts WHERE event_id = %s", (event_id,))
+                if contact_ids:
+                    execute_values(
+                        cur,
+                        "INSERT INTO event_contacts (event_id, contact_id) VALUES %s "
+                        "ON CONFLICT DO NOTHING",
+                        [(event_id, cid) for cid in contact_ids],
+                    )
+
+            return dict(event) if event else None
+
+        return self.execute_transaction(_tx)
 
     # ------------------------------------------------------------------ #
     #  Reminders                                                           #
@@ -1163,15 +1966,19 @@ class DatabaseManager:
         If contact_ids is provided, only those contacts are considered
         (used to intersect with semantic search results).
         """
-        conditions = ["c.org_id = %s"]
-        params: List[Any] = [org_id]
+        # IMPORTANT: SQL placeholders in `JOIN ... ad.field_name = %s AND ad.org_id = %s`
+        # appear *before* the `WHERE ... c.org_id = %s` placeholders.
+        # So we must build `join_params` first, then `where_params`, and pass params in that order.
+        where_conditions = ["c.org_id = %s"]
+        where_params: List[Any] = [org_id]
         core_fields = {"first_name", "last_name", "email", "phone"}
         joins: List[str] = []
         join_idx = 0
+        join_params: List[Any] = []
 
         if contact_ids:
-            conditions.append("c.contact_id = ANY(%s)")
-            params.append(contact_ids)
+            where_conditions.append("c.contact_id = ANY(%s)")
+            where_params.append(contact_ids)
 
         for f in (exact_filters or []):
             field = f["field_name"]
@@ -1184,11 +1991,11 @@ class DatabaseManager:
 
             if field in core_fields:
                 if op == "contains":
-                    conditions.append(f"c.{field} ILIKE %s")
-                    params.append(f"%{val}%")
+                    where_conditions.append(f"c.{field} ILIKE %s")
+                    where_params.append(f"%{val}%")
                 else:
-                    conditions.append(f"c.{field} {pg_op} %s")
-                    params.append(val)
+                    where_conditions.append(f"c.{field} {pg_op} %s")
+                    where_params.append(val)
             else:
                 a = f"av{join_idx}"
                 join_idx += 1
@@ -1200,21 +2007,21 @@ class DatabaseManager:
                     f"  AND ad{a}.field_name = %s "
                     f"  AND ad{a}.org_id = %s"
                 )
-                params.extend([field, org_id])
+                join_params.extend([field, org_id])
                 typed_col = (
                     f"{a}.value_boolean" if isinstance(val, bool) else
                     f"{a}.value_number"  if isinstance(val, (int, float)) else
                     f"{a}.value_text"
                 )
                 if op == "contains":
-                    conditions.append(f"{a}.value_text ILIKE %s")
-                    params.append(f"%{val}%")
+                    where_conditions.append(f"{a}.value_text ILIKE %s")
+                    where_params.append(f"%{val}%")
                 else:
-                    conditions.append(f"{typed_col} {pg_op} %s")
-                    params.append(val)
+                    where_conditions.append(f"{typed_col} {pg_op} %s")
+                    where_params.append(val)
 
         join_sql  = " ".join(joins)
-        where_sql = " AND ".join(conditions)
+        where_sql = " AND ".join(where_conditions)
         sql = (
             f"SELECT DISTINCT c.contact_id, c.first_name, c.last_name, "
             f"c.email, c.phone, c.created_at "
@@ -1223,4 +2030,4 @@ class DatabaseManager:
             f"ORDER BY c.last_name, c.first_name "
             f"LIMIT 500"
         )
-        return self.execute_query(sql, tuple(params), fetch="all")
+        return self.execute_query(sql, tuple(join_params + where_params), fetch="all")

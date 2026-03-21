@@ -5,8 +5,9 @@ from datetime import datetime
 
 from core.database import DatabaseManager
 from core.dependencies import get_db, get_current_user
-from core.llm import build_contact_query_plan, validate_prompt_context
+from core.llm import build_contact_query_plan, validate_prompt_context, compose_event_draft
 from core.query_engine import execute_query_plan
+from core.embeddings import embed_text
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
@@ -34,6 +35,21 @@ class RSVPUpdateRequest(BaseModel):
     rsvp_status: str  # invited | attending | declined | maybe
 
 
+class InviteSentUpdateRequest(BaseModel):
+    contact_id: int
+    channel: str  # email | whatsapp
+    sent: bool = True
+
+
+class EventUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    location: Optional[str] = None
+    event_date: Optional[datetime] = None
+    status: Optional[str] = None  # draft | scheduled | completed | cancelled
+    contact_ids: Optional[List[int]] = None
+
+
 # ------------------------------------------------------------------ #
 #  Endpoints                                                          #
 # ------------------------------------------------------------------ #
@@ -59,15 +75,36 @@ def preview_event(
         }
 
     schema = db.get_attribute_defs(org_id)
-    query_plan = build_contact_query_plan(body.prompt, schema)
-    contacts = execute_query_plan(db, org_id, query_plan)
+    try:
+        draft = compose_event_draft(body.prompt)
+        query_plan = build_contact_query_plan(body.prompt, schema)
+        contacts = execute_query_plan(db, org_id, query_plan)
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": str(e),
+            "correct_context": validation.get("correct_context"),
+        }
+
+    # Prefer segment-based preselection when the prompt references a segment name (e.g. "students").
+    query_vec = embed_text(body.prompt)
+    segment_matches = db.semantic_search_segments(org_id=org_id, query_embedding=query_vec, top_k=5, similarity_threshold=0.45)
+    segment_ids = [m["segment_id"] for m in segment_matches][:3]  # keep UI readable
+
+    segment_contacts = db.get_contacts_in_segments(org_id=org_id, segment_ids=segment_ids)
+    segment_member_ids = {c["contact_id"] for c in segment_contacts}
+
+    # Only return individuals that aren't already covered by selected segments.
+    individual_contacts = [c for c in contacts if c.get("contact_id") not in segment_member_ids]
 
     return {
         "valid": True,
         "prompt": body.prompt,
+        "draft": draft,
         "query_plan": query_plan,
-        "preselected_count": len(contacts),
-        "contacts": contacts,
+        "preselected_count": len(segment_contacts) + len(individual_contacts),
+        "contacts": individual_contacts,
+        "segment_ids": segment_ids,
         "warnings": query_plan.get("warnings", []),
     }
 
@@ -90,6 +127,11 @@ def create_event(
         created_by=current_user["user_id"],
         contact_ids=body.contact_ids,
     )
+
+    # Create/update the vector for semantic event-name resolution.
+    text = f"{event.get('name') or ''}\n{event.get('description') or ''}\n{event.get('location') or ''}\n{event.get('prompt') or ''}".strip()
+    vec = embed_text(text)
+    db.upsert_event_embedding(org_id=org_id, event_id=event["event_id"], embedding=vec)
     return {"event": event, "invited_count": len(body.contact_ids)}
 
 
@@ -124,8 +166,59 @@ def update_rsvp(
     valid_rsvp = ("invited", "attending", "declined", "maybe")
     if body.rsvp_status not in valid_rsvp:
         raise HTTPException(status_code=400, detail=f"rsvp_status must be one of {valid_rsvp}")
-    db.update_event_rsvp(event_id, body.contact_id, body.rsvp_status)
+    db.update_event_rsvp(event_id, current_user["org_id"], body.contact_id, body.rsvp_status)
     return {"message": "RSVP updated"}
+
+
+@router.patch("/{event_id}/invite-sent", summary="Mark an invite notification as sent")
+def update_invite_sent(
+    event_id: int,
+    body: InviteSentUpdateRequest,
+    db: DatabaseManager = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    channel = body.channel
+    if channel not in ("email", "whatsapp"):
+        raise HTTPException(status_code=400, detail="channel must be 'email' or 'whatsapp'")
+
+    db.update_event_invite_sent(
+        event_id=event_id,
+        org_id=current_user["org_id"],
+        contact_id=body.contact_id,
+        channel=channel,
+        sent=body.sent,
+    )
+    return {"message": "Invite notification updated"}
+
+
+@router.patch("/{event_id}", summary="Update an event (details/invitees)")
+def update_event(
+    event_id: int,
+    body: EventUpdateRequest,
+    db: DatabaseManager = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    valid_status = ("draft", "scheduled", "completed", "cancelled")
+    if body.status is not None and body.status not in valid_status:
+        raise HTTPException(status_code=400, detail=f"status must be one of {valid_status}")
+
+    updated = db.update_event(
+        event_id=event_id,
+        org_id=current_user["org_id"],
+        name=body.name,
+        description=body.description,
+        location=body.location,
+        event_date=body.event_date,
+        status=body.status,
+        contact_ids=body.contact_ids,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    text = f"{updated.get('name') or ''}\n{updated.get('description') or ''}\n{updated.get('location') or ''}\n{updated.get('prompt') or ''}".strip()
+    vec = embed_text(text)
+    db.upsert_event_embedding(org_id=current_user["org_id"], event_id=updated["event_id"], embedding=vec)
+    return updated
 
 
 @router.delete("/{event_id}", summary="Delete an event")

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.dependencies import get_db
-from routes import auth, contacts, segments, campaigns, events, reminders, imports, schema
+from routes import auth, contacts, segments, campaigns, events, reminders, imports, schema, users, templates, analytics
 
 app = FastAPI(
     title="AI-First CRM",
@@ -30,6 +30,9 @@ app.include_router(events.router)
 app.include_router(reminders.router)
 app.include_router(imports.router)
 app.include_router(schema.router)
+app.include_router(users.router)
+app.include_router(templates.router)
+app.include_router(analytics.router)
 
 
 # ------------------------------------------------------------------ #

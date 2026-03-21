@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User } from '@/types/contact';
 import { mockUsers } from '@/data/mockData';
+import { apiGet } from '@/lib/api';
 
 interface AuthContextType {
   user: User | null;
@@ -22,34 +23,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [orgSetupCompleted, setOrgSetupCompleted] = useState(false);
 
-  // Backend API base URL – adjust if your FastAPI server runs elsewhere
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
-
   const refreshFromToken = async (token?: string) => {
     const effectiveToken = token || localStorage.getItem('crm_token');
     if (!effectiveToken) return;
 
     setLoading(true);
     try {
-      const [meRes, setupRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/auth/me`, {
-          headers: {
-            Authorization: `Bearer ${effectiveToken}`,
-          },
-        }),
-        fetch(`${API_BASE_URL}/auth/setup-status`, {
-          headers: {
-            Authorization: `Bearer ${effectiveToken}`,
-          },
-        }),
+      const [backendUser, setupStatus] = await Promise.all([
+        apiGet<any>('/auth/me', { token: effectiveToken }),
+        apiGet<any>('/auth/setup-status', { token: effectiveToken }).catch(() => ({ setup_completed: false })),
       ]);
-
-      if (!meRes.ok) {
-        throw new Error('Failed to fetch current user');
-      }
-
-      const backendUser = await meRes.json();
-      const setupStatus = setupRes.ok ? await setupRes.json() : { setup_completed: false };
 
       const mappedUser: User = {
         id: String(backendUser.user_id ?? backendUser.id ?? ''),
@@ -100,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setLoading(false);
-  }, [API_BASE_URL]);
+  }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {
     setLoading(true);
@@ -137,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginWithGoogle = async (): Promise<boolean> => {
     // Hand control over to the backend Google OAuth flow.
     // The backend `GET /auth/google/login` will redirect to Google and then back to your API.
-    window.location.href = `${API_BASE_URL}/auth/google/login`;
+    window.location.href = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001'}/auth/google/login`;
     return true;
   };
 

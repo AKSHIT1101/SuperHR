@@ -30,8 +30,8 @@ export default function Auth() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground font-bold text-xl mb-4">AI</div>
-          <h1 className="text-2xl font-bold">AI-first CRM</h1>
+          <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground font-bold text-xl mb-4">PC</div>
+          <h1 className="text-2xl font-bold">Prompt CRM</h1>
           <p className="text-muted-foreground mt-1">Sign in with your organization account</p>
         </div>
         <Card className="shadow-lg">

@@ -16,6 +16,7 @@ import Settings from "./pages/Settings";
 import AudienceSegments from "./pages/AudienceSegments";
 import Auth from "./pages/Auth";
 import AuthCallback from "./pages/AuthCallback";
+import InviteDecision from "./pages/InviteDecision";
 import SchemaSetup from "./pages/SchemaSetup";
 import NotFound from "./pages/NotFound";
 
@@ -58,6 +59,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/auth" element={isAuthenticated ? <Navigate to="/" replace /> : <Auth />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
+      <Route path="/invite" element={<InviteDecision />} />
       <Route path="/schema-setup" element={<SetupRoute><SchemaSetup /></SetupRoute>} />
       <Route path="/" element={<ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>} />
       <Route path="/contacts" element={<ProtectedRoute><AppLayout><Contacts /></AppLayout></ProtectedRoute>} />

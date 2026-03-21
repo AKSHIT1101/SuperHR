@@ -1,15 +1,20 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
-import { mockMetrics } from '@/data/mockData';
 
-export function ContactTypeChart() {
+export function ContactTypeChart({
+  title = 'Campaigns by Channel',
+  data = [],
+}: {
+  title?: string;
+  data?: Array<{ name: string; value: number; color: string }>;
+}) {
   return (
     <div className="chart-container">
-      <h3 className="font-semibold mb-4">Contacts by Type</h3>
+      <h3 className="font-semibold mb-4">{title}</h3>
       <div className="h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
-              data={mockMetrics.contactsByType}
+              data={data}
               cx="50%"
               cy="50%"
               innerRadius={60}
@@ -17,7 +22,7 @@ export function ContactTypeChart() {
               paddingAngle={2}
               dataKey="value"
             >
-              {mockMetrics.contactsByType.map((entry, index) => (
+              {data.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={entry.color} />
               ))}
             </Pie>

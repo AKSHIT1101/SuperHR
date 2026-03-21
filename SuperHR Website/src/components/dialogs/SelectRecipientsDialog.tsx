@@ -13,12 +13,13 @@ interface SelectRecipientsDialogProps {
   selectedIndividuals: string[];
   onConfirm: (segments: string[], individuals: string[]) => void;
   audienceSegments: AudienceSegment[];
+  contacts: Array<{ id: string; firstName: string; lastName: string; email?: string; phone?: string; whatsapp?: string }>;
   messageType: 'email' | 'whatsapp';
 }
 
 export function SelectRecipientsDialog({
   open, onOpenChange, selectedSegments: initialSegments, selectedIndividuals: initialIndividuals,
-  onConfirm, audienceSegments, messageType,
+  onConfirm, audienceSegments, messageType, contacts,
 }: SelectRecipientsDialogProps) {
   const [selectedSegments, setSelectedSegments] = useState<string[]>(initialSegments);
   const [selectedIndividuals, setSelectedIndividuals] = useState<string[]>(initialIndividuals);
@@ -36,16 +37,25 @@ export function SelectRecipientsDialog({
   };
 
   const totalRecipients = useMemo(() => {
-    const segmentMemberIds = selectedSegments.flatMap((segId) => {
-      const seg = audienceSegments.find((s) => s.id === segId);
-      return seg?.memberIds || [];
-    });
-    return [...new Set([...segmentMemberIds, ...selectedIndividuals])].length;
+    const selectedAudienceSegments = selectedSegments
+      .map((segId) => audienceSegments.find((s) => s.id === segId))
+      .filter(Boolean) as AudienceSegment[];
+
+    const segmentMemberIds = selectedAudienceSegments.flatMap((seg) => seg.memberIds || []);
+    const uniqueIndividuals = new Set(selectedIndividuals);
+
+    // If `memberIds` aren’t available, fall back to `memberCount` for a reasonable estimate.
+    if (segmentMemberIds.length === 0) {
+      const segmentCount = selectedAudienceSegments.reduce((sum, seg) => sum + (seg.memberCount || 0), 0);
+      return segmentCount + uniqueIndividuals.size;
+    }
+
+    return [...new Set([...segmentMemberIds, ...uniqueIndividuals])].length;
   }, [selectedSegments, selectedIndividuals, audienceSegments]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl h-[85vh] p-0 flex flex-col overflow-hidden">
+      <DialogContent className="w-[96vw] max-w-[1200px] h-[92vh] p-0 flex flex-col overflow-hidden">
         <DialogHeader className="px-6 pt-5 pb-3 shrink-0 border-b">
           <DialogTitle>Select Recipients</DialogTitle>
           <DialogDescription>
@@ -54,12 +64,15 @@ export function SelectRecipientsDialog({
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-hidden p-6 pt-4 flex flex-col">
-          <PersonSelector
-            selectedSegments={selectedSegments} selectedIndividuals={selectedIndividuals}
-            onSegmentsChange={setSelectedSegments} onIndividualsChange={setSelectedIndividuals}
-            audienceSegments={audienceSegments} filterByPhone={messageType === 'whatsapp'}
-            className="flex-1 min-h-0"
-          />
+            <PersonSelector
+              selectedSegments={selectedSegments} selectedIndividuals={selectedIndividuals}
+              onSegmentsChange={setSelectedSegments} onIndividualsChange={setSelectedIndividuals}
+              audienceSegments={audienceSegments}
+              contacts={contacts}
+              filterByPhone={messageType === 'whatsapp'}
+              className="flex-1 min-h-0"
+            />
+    
           <div className="bg-muted border rounded-md p-3 mt-3 shrink-0">
             <div className="flex items-center justify-between">
               <div>

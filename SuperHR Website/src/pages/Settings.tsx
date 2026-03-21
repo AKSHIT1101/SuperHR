@@ -12,10 +12,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { SenderConfig, CustomField, defaultCustomFields } from '@/types/contact';
+import { apiPost } from '@/lib/api';
+import { useNavigate } from 'react-router-dom';
 
 export default function Settings() {
   const { toast } = useToast();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, refreshFromToken, logout } = useAuth();
+  const navigate = useNavigate();
 
   const [senders, setSenders] = useState<SenderConfig[]>([
     { id: '1', type: 'email', name: 'CRM Team', address: 'crm@company.com', isDefault: true },
@@ -153,6 +156,46 @@ export default function Settings() {
           <Card><CardHeader><CardTitle>Security Settings</CardTitle><CardDescription>Manage your account security</CardDescription></CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-2"><Label>Current User</Label><div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30"><div><p className="font-medium">{user?.name || 'User'}</p><p className="text-sm text-muted-foreground">{user?.email}</p></div><Badge className="ml-auto capitalize">{user?.role}</Badge></div></div>
+              <div className="space-y-2">
+                <Label>Organization</Label>
+                <div className="rounded-lg border p-4">
+                  <p className="text-sm text-muted-foreground">
+                    Leave your current organization. If you are a non-admin, a new personal organization will be created for you.
+                    If you are the admin, leaving will delete the entire organization and all its data.
+                  </p>
+                  <div className="mt-4 flex justify-end">
+                    <Button
+                      variant="destructive"
+                      onClick={async () => {
+                        const ok = window.confirm(
+                          isAdmin
+                            ? 'You are the admin. Leaving will DELETE the entire organization and all its data. Continue?'
+                            : 'Leave your organization and create a new personal organization?'
+                        );
+                        if (!ok) return;
+                        try {
+                          const resp: any = await apiPost('/auth/leave-org', {});
+                          if (resp?.access_token) {
+                            localStorage.setItem('crm_token', resp.access_token);
+                            await refreshFromToken(resp.access_token);
+                            navigate('/schema-setup', { replace: true });
+                            toast({ title: 'Left organization' });
+                          } else {
+                            // Admin deletion path returns only a message, so log out.
+                            logout();
+                            navigate('/auth', { replace: true });
+                            toast({ title: 'Organization deleted' });
+                          }
+                        } catch (e: any) {
+                          toast({ title: 'Failed to leave organization', description: e?.message ?? 'Unknown error', variant: 'destructive' });
+                        }
+                      }}
+                    >
+                      Leave organization
+                    </Button>
+                  </div>
+                </div>
+              </div>
               <div className="space-y-2"><Label>Change Password</Label><div className="space-y-3"><Input type="password" placeholder="Current password" /><Input type="password" placeholder="New password" /><Input type="password" placeholder="Confirm new password" /><Button variant="outline">Update Password</Button></div></div>
             </CardContent>
           </Card>

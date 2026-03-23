@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Search, X, Users, Filter, CheckSquare, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,8 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AudienceSegment, Contact } from '@/types/contact';
-import { mockContacts } from '@/data/mockData';
+import { AudienceSegment } from '@/types/contact';
 import { cn } from '@/lib/utils';
 
 const locationOptions = ['Bangalore', 'Mumbai', 'Kochi', 'Delhi', 'Chennai', 'Hyderabad', 'Pune', 'Kolkata', 'Palo Alto'];
@@ -27,6 +26,18 @@ interface PersonSelectorProps {
   onSegmentsChange: (segments: string[]) => void;
   onIndividualsChange: (individuals: string[]) => void;
   audienceSegments: AudienceSegment[];
+  contacts: Array<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    email?: string;
+    phone?: string;
+    whatsapp?: string;
+    type?: string;
+    department?: string;
+    engagementLevel?: string;
+    currentCity?: string;
+  }>;
   aiRecommendations?: string[];
   aiContext?: string;
   onApplyAIRecommendations?: () => void;
@@ -40,10 +51,13 @@ export function PersonSelector({
   onSegmentsChange,
   onIndividualsChange,
   audienceSegments,
+  contacts,
   filterByPhone = false,
   className,
 }: PersonSelectorProps) {
-  const [activeTab, setActiveTab] = useState<'segments' | 'individuals'>('segments');
+  const [activeTab, setActiveTab] = useState<'segments' | 'individuals'>(
+    selectedIndividuals.length > 0 && selectedSegments.length === 0 ? 'individuals' : 'segments',
+  );
   const [segmentSearch, setSegmentSearch] = useState('');
   const [contactSearch, setContactSearch] = useState('');
   const [filterLocation, setFilterLocation] = useState('all');
@@ -52,22 +66,37 @@ export function PersonSelector({
   const [filterEngagement, setFilterEngagement] = useState('all');
   const [showFilters, setShowFilters] = useState(true);
 
+  // If the dialog is opened with individuals preselected (common for edits / event->campaigns),
+  // avoid landing the user on the empty "Segments" tab.
+  useEffect(() => {
+    if (activeTab !== 'segments') return;
+    if (selectedIndividuals.length === 0) return;
+    if (selectedSegments.length > 0) return;
+    setActiveTab('individuals');
+  }, [activeTab, selectedIndividuals.length, selectedSegments.length]);
+
   const filteredSegments = useMemo(() => {
     if (!segmentSearch) return audienceSegments;
     return audienceSegments.filter((s) => s.name.toLowerCase().includes(segmentSearch.toLowerCase()));
   }, [segmentSearch, audienceSegments]);
 
   const filteredContacts = useMemo(() => {
-    return mockContacts.filter((contact) => {
-      const matchesSearch = contactSearch === '' || `${contact.firstName} ${contact.lastName} ${contact.email} ${contact.phone || ''}`.toLowerCase().includes(contactSearch.toLowerCase());
-      const matchesLocation = filterLocation === 'all' || contact.currentCity?.toLowerCase().includes(filterLocation.toLowerCase());
+    return contacts.filter((contact) => {
+      const matchesSearch =
+        contactSearch === '' ||
+        `${contact.firstName} ${contact.lastName} ${contact.email || ''} ${contact.phone || ''}`
+          .toLowerCase()
+          .includes(contactSearch.toLowerCase());
+      const matchesLocation =
+        filterLocation === 'all' ||
+        (contact.currentCity || '').toLowerCase().includes(filterLocation.toLowerCase());
       const matchesDepartment = filterDepartment === 'all' || contact.department === filterDepartment;
       const matchesType = filterType === 'all' || contact.type === filterType;
       const matchesEngagement = filterEngagement === 'all' || contact.engagementLevel === filterEngagement;
       if (filterByPhone && !contact.whatsapp && !contact.phone) return false;
       return matchesSearch && matchesLocation && matchesDepartment && matchesType && matchesEngagement;
     });
-  }, [contactSearch, filterLocation, filterDepartment, filterType, filterEngagement, filterByPhone]);
+  }, [contacts, contactSearch, filterLocation, filterDepartment, filterType, filterEngagement, filterByPhone]);
 
   const toggleSegment = (segmentId: string) => {
     const updated = selectedSegments.includes(segmentId)
@@ -103,7 +132,7 @@ export function PersonSelector({
 
   const activeFiltersCount = [filterLocation, filterDepartment, filterType, filterEngagement].filter((f) => f !== 'all').length;
 
-  const renderContactRow = (contact: Contact) => (
+  const renderContactRow = (contact: PersonSelectorProps['contacts'][number]) => (
     <div
       key={contact.id}
       className={cn(
@@ -118,11 +147,11 @@ export function PersonSelector({
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium text-sm">{contact.firstName} {contact.lastName}</p>
-        <p className="truncate text-xs text-muted-foreground">{filterByPhone ? (contact.whatsapp || contact.phone || 'No phone') : contact.email}</p>
+        <p className="truncate text-xs text-muted-foreground">{filterByPhone ? (contact.whatsapp || contact.phone || 'No phone') : (contact.email || 'No email')}</p>
       </div>
       <div className="flex shrink-0 gap-2 flex-wrap justify-end">
-        <Badge variant="outline" className="text-xs capitalize">{contact.type}</Badge>
-        <Badge variant="secondary" className="text-xs capitalize">{contact.engagementLevel}</Badge>
+        {contact.type && <Badge variant="outline" className="text-xs capitalize">{contact.type}</Badge>}
+        {contact.engagementLevel && <Badge variant="secondary" className="text-xs capitalize">{contact.engagementLevel}</Badge>}
       </div>
     </div>
   );
@@ -143,7 +172,8 @@ export function PersonSelector({
           </TabsTrigger>
         </TabsList>
 
-        <div className={cn('flex-1 flex flex-col min-h-0', activeTab !== 'segments' && 'hidden')}>
+        {activeTab === 'segments' && (
+          <div className="flex-1 flex flex-col min-h-0">
           <div className="mb-3 shrink-0 relative">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input placeholder="Search segments..." value={segmentSearch} onChange={(e) => setSegmentSearch(e.target.value)} className="pl-8 h-10 text-sm" />
@@ -167,8 +197,10 @@ export function PersonSelector({
             </div>
           </ScrollArea>
         </div>
+        )}
 
-        <div className={cn('flex-1 min-h-0 gap-4 lg:grid lg:grid-cols-[240px_minmax(0,1fr)]', activeTab !== 'individuals' && 'hidden')}>
+{activeTab === 'individuals' && (
+  <div className="flex-1 min-h-0 gap-4 lg:grid lg:grid-cols-[240px_minmax(0,1fr)]">
           <div className={cn('rounded-2xl border bg-muted/30 overflow-hidden flex flex-col min-h-0', !showFilters && 'lg:w-12')}>
             <Button variant="ghost" size="sm" className="h-10 shrink-0 rounded-none border-b justify-between px-3" onClick={() => setShowFilters(!showFilters)}>
               {showFilters && <span className="text-xs font-medium">Filters</span>}
@@ -205,6 +237,7 @@ export function PersonSelector({
             </ScrollArea>
           </div>
         </div>
+        )}
       </Tabs>
     </div>
   );

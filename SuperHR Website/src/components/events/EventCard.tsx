@@ -9,9 +9,13 @@ import { cn } from '@/lib/utils';
 interface EventCardProps {
   event: Event;
   onClick?: () => void;
+  onViewDetails?: () => void;
+  onEdit?: () => void;
+  onSendInvites?: () => void;
+  onDeleteEvent?: () => void;
 }
 
-export function EventCard({ event, onClick }: EventCardProps) {
+export function EventCard({ event, onClick, onViewDetails, onEdit, onSendInvites, onDeleteEvent }: EventCardProps) {
   const statusStyles: Record<string, string> = {
     draft: 'bg-muted text-muted-foreground', scheduled: 'bg-info/10 text-info', ongoing: 'bg-success/10 text-success',
     completed: 'bg-secondary text-secondary-foreground', cancelled: 'bg-destructive/10 text-destructive',
@@ -36,7 +40,35 @@ export function EventCard({ event, onClick }: EventCardProps) {
             <h3 className="font-semibold mt-2 truncate">{event.title}</h3>
             <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{event.description}</p>
           </div>
-          <DropdownMenu><DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-8 w-8 shrink-0"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem>View Details</DropdownMenuItem><DropdownMenuItem>Edit Event</DropdownMenuItem><DropdownMenuItem>Send Invites</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-destructive">Cancel Event</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0"><MoreHorizontal className="h-4 w-4" /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={(e) => { e.stopPropagation(); onViewDetails?.(); }}
+              >
+                View Details
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => { e.stopPropagation(); onEdit?.(); }}
+              >
+                Edit Event
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => { e.stopPropagation(); onSendInvites?.(); }}
+              >
+                Send Invites
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive"
+                onClick={(e) => { e.stopPropagation(); onDeleteEvent?.(); }}
+              >
+                Delete Event
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <div className="grid grid-cols-2 gap-3 mt-4 text-sm text-muted-foreground">
           <div className="flex items-center gap-1.5"><Calendar className="h-4 w-4 shrink-0" /><span>{new Date(event.date).toLocaleDateString()}</span></div>

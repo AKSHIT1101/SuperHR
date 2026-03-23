@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Plus, Users, Search, Edit2, Trash2, CheckSquare, X, Sparkles, Wand2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Users, Search, Edit2, Trash2, CheckSquare, X, Wand2, Sparkles, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -10,16 +10,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { AudienceSegment } from '@/types/contact';
-import { mockContacts } from '@/data/mockData';
 import { cn } from '@/lib/utils';
+import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
 
-const initialSegments: AudienceSegment[] = [
-  { id: '1', name: 'Bangalore Contacts', description: 'All contacts based in Bangalore', filters: { locations: ['Bangalore'] }, memberIds: ['1', '5'], memberCount: 2, createdAt: '2024-01-15', createdBy: 'admin', updatedAt: '2024-01-15' },
-  { id: '2', name: 'Tech Department', description: 'Contacts from Technology department', filters: { departments: ['Technology'] }, memberIds: ['1'], memberCount: 1, createdAt: '2024-01-10', createdBy: 'admin', updatedAt: '2024-01-10' },
-  { id: '3', name: 'High Engagement', description: 'Contacts with high engagement scores', filters: { engagementLevels: ['high'] }, memberIds: ['1', '4'], memberCount: 2, createdAt: '2024-01-08', createdBy: 'admin', updatedAt: '2024-01-08' },
-  { id: '4', name: 'Available Consultants', description: 'Contacts available for consulting', filters: { tags: ['Consultant'] }, memberIds: ['1', '2', '4', '5'], memberCount: 4, createdAt: '2024-01-05', createdBy: 'admin', updatedAt: '2024-01-05' },
-];
+type UiContact = { id: string; firstName: string; lastName: string; email?: string; phone?: string; type?: string; department?: string; currentCity?: string; engagementLevel?: string; status?: string; photo?: string };
+type UiSegment = { id: string; name: string; description?: string; memberIds: string[]; memberCount: number; createdAt: string; updatedAt: string };
 
 const locationOptions = ['Bangalore', 'Mumbai', 'Kochi', 'Delhi', 'Chennai', 'Hyderabad', 'Pune', 'Kolkata', 'Palo Alto', 'San Francisco'];
 const departmentOptions = ['Technology', 'Analytics', 'Operations', 'R&D', 'Biotech', 'Sales', 'Marketing'];
@@ -44,21 +39,26 @@ const engagementOptions = [
 ];
 
 const aiSegmentSuggestions = [
-  'Create a segment of Mumbai leads who prefer WhatsApp and have medium engagement',
-  'Build a VIP segment of highly engaged Bangalore contacts for an in-person event',
-  'Find inactive partners who should be reactivated this month',
+  'Create a segment for all people who work in sales',
+  'Find contacts in Bangalore whose job title mentions marketing',
+  'Segment employees with job titles related to technology and high engagement',
 ];
 
 export default function AudienceSegments() {
   const { toast } = useToast();
-  const [segments, setSegments] = useState<AudienceSegment[]>(initialSegments);
+  const [segments, setSegments] = useState<UiSegment[]>([]);
+  const [contacts, setContacts] = useState<UiContact[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [editingSegment, setEditingSegment] = useState<AudienceSegment | null>(null);
+  const [editingSegment, setEditingSegment] = useState<UiSegment | null>(null);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
-  const [previewSegment, setPreviewSegment] = useState<AudienceSegment | null>(null);
+  const [previewSegment, setPreviewSegment] = useState<UiSegment | null>(null);
   const [segmentName, setSegmentName] = useState('');
   const [segmentDescription, setSegmentDescription] = useState('');
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiQueryPlan, setAiQueryPlan] = useState<any | null>(null);
+  const [aiPreviewLoading, setAiPreviewLoading] = useState(false);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [contactSearch, setContactSearch] = useState('');
   const [filterLocation, setFilterLocation] = useState('all');
@@ -66,12 +66,99 @@ export default function AudienceSegments() {
   const [filterType, setFilterType] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterEngagement, setFilterEngagement] = useState('all');
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [lastAiPrompt, setLastAiPrompt] = useState('');
+
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewContact, setViewContact] = useState<{
+    contact_id?: number;
+    first_name?: string;
+    last_name?: string;
+    email?: string | null;
+    phone?: string | null;
+    created_at?: string;
+    updated_at?: string;
+    attributes?: Record<string, unknown>;
+  } | null>(null);
+
+  const handleViewContact = async (contactId: string) => {
+    setViewOpen(true);
+    setViewLoading(true);
+    setViewContact(null);
+    try {
+      const details = await apiGet<any>(`/contacts/${contactId}`);
+      setViewContact(details);
+    } catch (e: any) {
+      toast({ title: 'Failed to load contact', description: e?.message ?? 'Unknown error', variant: 'destructive' });
+      setViewOpen(false);
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const fetchSegmentsAndContacts = async () => {
+    setLoading(true);
+    try {
+      const segRows = await apiGet<any[]>('/segments');
+
+      // Pagination: load enough contacts so AI preview matches are likely visible.
+      const allContacts: any[] = [];
+      let offset = 0;
+      const limit = 500;
+      const maxFetch = 5000;
+      let total = Infinity;
+      while (offset < total && offset < maxFetch) {
+        const page = await apiGet<any>(`/contacts?limit=${limit}&offset=${offset}`);
+        const pageContacts = page?.contacts ?? [];
+        allContacts.push(...pageContacts);
+        total = typeof page?.total === 'number' ? page.total : offset + pageContacts.length;
+        if (!pageContacts.length) break;
+        offset += limit;
+      }
+
+      const mappedSegments: UiSegment[] = (segRows || []).map((s: any) => ({
+        id: String(s.segment_id),
+        name: s.name,
+        description: s.description || undefined,
+        memberIds: [],
+        memberCount: Number(s.contact_count || 0),
+        createdAt: s.created_at || new Date().toISOString(),
+        updatedAt: s.updated_at || s.created_at || new Date().toISOString(),
+      }));
+      setSegments(mappedSegments);
+
+      const mappedContacts: UiContact[] = (allContacts || []).map((c: any) => ({
+        id: String(c.contact_id),
+        firstName: c.first_name,
+        lastName: c.last_name,
+        email: c.email || undefined,
+        phone: c.phone || undefined,
+        // optional fields not present in backend contact core schema today
+        type: c.type || undefined,
+        department: c.department || undefined,
+        currentCity: c.current_city || undefined,
+        engagementLevel: c.engagement_level || undefined,
+        status: c.status || undefined,
+        photo: c.photo || undefined,
+      }));
+      setContacts(mappedContacts);
+    } catch (e: any) {
+      toast({ title: 'Failed to load segments', description: e?.message ?? 'Unknown error', variant: 'destructive' });
+      setSegments([]);
+      setContacts([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSegmentsAndContacts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const resetForm = () => {
     setSegmentName('');
     setSegmentDescription('');
+    setAiQueryPlan(null);
     setSelectedMemberIds([]);
     setContactSearch('');
     setFilterLocation('all');
@@ -80,23 +167,22 @@ export default function AudienceSegments() {
     setFilterStatus('all');
     setFilterEngagement('all');
     setEditingSegment(null);
-    setLastAiPrompt('');
   };
 
   const filteredContacts = useMemo(() => {
-    return mockContacts.filter((c) => {
-      const matchesSearch = contactSearch === '' || `${c.firstName} ${c.lastName} ${c.email} ${c.department}`.toLowerCase().includes(contactSearch.toLowerCase());
-      const matchesLocation = filterLocation === 'all' || c.currentCity?.toLowerCase().includes(filterLocation.toLowerCase()) || c.location?.toLowerCase().includes(filterLocation.toLowerCase());
+    return contacts.filter((c) => {
+      const matchesSearch = contactSearch === '' || `${c.firstName} ${c.lastName} ${c.email || ''} ${c.department || ''}`.toLowerCase().includes(contactSearch.toLowerCase());
+      const matchesLocation = filterLocation === 'all' || (c.currentCity || '').toLowerCase().includes(filterLocation.toLowerCase());
       const matchesDepartment = filterDepartment === 'all' || c.department === filterDepartment;
       const matchesType = filterType === 'all' || c.type === filterType;
       const matchesStatus = filterStatus === 'all' || c.status === filterStatus;
       const matchesEngagement = filterEngagement === 'all' || c.engagementLevel === filterEngagement;
       return matchesSearch && matchesLocation && matchesDepartment && matchesType && matchesStatus && matchesEngagement;
     });
-  }, [contactSearch, filterLocation, filterDepartment, filterType, filterStatus, filterEngagement]);
+  }, [contacts, contactSearch, filterLocation, filterDepartment, filterType, filterStatus, filterEngagement]);
 
   const filteredSegments = segments.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()));
-  const getSegmentMembers = (memberIds: string[]) => mockContacts.filter((c) => memberIds.includes(c.id));
+  const getSegmentMembers = (memberIds: string[]) => contacts.filter((c) => memberIds.includes(c.id));
   const activeFiltersCount = [filterLocation, filterDepartment, filterType, filterStatus, filterEngagement].filter((f) => f !== 'all').length;
 
   const toggleMember = (id: string) => setSelectedMemberIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
@@ -117,41 +203,75 @@ export default function AudienceSegments() {
     setFilterEngagement('all');
   };
 
-  const runAiSegmentCreation = (prompt = aiPrompt) => {
-    if (!prompt.trim()) {
-      toast({ title: 'Add an instruction', description: 'Describe the segment you want AI to prepare.', variant: 'destructive' });
+  const prefillSegmentMetaFromPrompt = (prompt: string): { name: string; description: string } => {
+    const cleaned = prompt.trim().replace(/^["']|["']$/g, '');
+
+    // Prefer phrase after last "in <x>" or "for <x>".
+    let tail = '';
+    const lowered = cleaned.toLowerCase();
+    if (lowered.includes(' in ')) tail = lowered.split(' in ').slice(-1)[0] || '';
+    else if (lowered.includes(' for ')) tail = lowered.split(' for ').slice(-1)[0] || '';
+
+    // Take first 1-3 tokens from tail
+    const tokens = (tail.match(/[a-z0-9]+/gi) || []).slice(0, 3).map((t) => t.toLowerCase());
+    const keyword = tokens.join(' ');
+
+    const title = keyword
+      ? keyword
+          .split(' ')
+          .filter(Boolean)
+          .map((w) => w[0]?.toUpperCase() + w.slice(1))
+          .join(' ')
+      : cleaned.slice(0, 40);
+
+    return {
+      name: keyword ? `${title} Segment` : `AI Segment`,
+      description: keyword ? `Contacts matching: ${title}` : `Contacts matching your prompt`,
+    };
+  };
+
+  const handleAiPreview = async (promptOverride?: string) => {
+    const prompt = (promptOverride ?? aiPrompt).trim();
+    if (!prompt) {
+      toast({ title: 'Validation Error', description: 'Please enter an AI prompt', variant: 'destructive' });
       return;
     }
+    setAiPreviewLoading(true);
+    try {
+      const res = await apiPost<any>('/segments/preview', { prompt });
+      if (!res?.valid) {
+        toast({ title: 'AI Preview failed', description: res?.error ?? 'Unknown error', variant: 'destructive' });
+        return;
+      }
+      const contacts = res?.contacts ?? [];
+      const ids = contacts.map((c: any) => String(c.contact_id)).filter((id: string) => id);
 
-    const lowerPrompt = prompt.toLowerCase();
-    const suggestedContacts = mockContacts.filter((contact) => {
-      const matchesLocation = lowerPrompt.includes('bangalore') ? contact.currentCity === 'Bangalore'
-        : lowerPrompt.includes('mumbai') ? contact.currentCity === 'Mumbai'
-        : lowerPrompt.includes('kochi') ? contact.currentCity === 'Kochi'
-        : true;
-      const matchesEngagement = lowerPrompt.includes('high engagement') || lowerPrompt.includes('vip')
-        ? contact.engagementLevel === 'high'
-        : lowerPrompt.includes('medium engagement')
-          ? contact.engagementLevel === 'medium'
-          : true;
-      const matchesDepartment = lowerPrompt.includes('technology') || lowerPrompt.includes('tech')
-        ? contact.department === 'Technology'
-        : lowerPrompt.includes('analytics')
-          ? contact.department === 'Analytics'
-          : true;
-      const matchesType = lowerPrompt.includes('lead') ? contact.type === 'lead'
-        : lowerPrompt.includes('partner') ? contact.type === 'partner'
-        : lowerPrompt.includes('customer') ? contact.type === 'customer'
-        : true;
-      return matchesLocation && matchesEngagement && matchesDepartment && matchesType;
-    });
+      // Prefill name/description and open the editor with preselected contacts.
+      const meta = prefillSegmentMetaFromPrompt(prompt);
+      setEditingSegment(null);
+      setSegmentName(meta.name);
+      setSegmentDescription(meta.description);
+      setSelectedMemberIds(ids);
+      setAiQueryPlan(res?.query_plan ?? null);
 
-    setSegmentName(prompt.length > 42 ? `${prompt.slice(0, 42)}…` : prompt);
-    setSegmentDescription(`AI prepared from: ${prompt}`);
-    setSelectedMemberIds(suggestedContacts.map((contact) => contact.id));
-    setLastAiPrompt(prompt);
-    setShowCreateDialog(true);
-    toast({ title: 'AI draft ready', description: `${suggestedContacts.length} contacts were preselected for review.` });
+      // Ensure preselected matches are visible right away.
+      setContactSearch('');
+      setFilterLocation('all');
+      setFilterDepartment('all');
+      setFilterType('all');
+      setFilterStatus('all');
+      setFilterEngagement('all');
+      setShowCreateDialog(true);
+
+      toast({
+        title: 'AI preview ready',
+        description: `${ids.length} contacts preselected. Review and click Create.`,
+      });
+    } catch (e: any) {
+      toast({ title: 'Failed to preview segment', description: e?.message ?? 'Unknown error', variant: 'destructive' });
+    } finally {
+      setAiPreviewLoading(false);
+    }
   };
 
   const handleSave = () => {
@@ -165,33 +285,72 @@ export default function AudienceSegments() {
     }
 
     if (editingSegment) {
-      setSegments((prev) => prev.map((s) => s.id === editingSegment.id ? { ...s, name: segmentName, description: segmentDescription, memberIds: selectedMemberIds, memberCount: selectedMemberIds.length, updatedAt: new Date().toISOString() } : s));
-      toast({ title: 'Success', description: 'Segment updated successfully' });
+      apiPatch(`/segments/${editingSegment.id}`, {
+        name: segmentName,
+        description: segmentDescription || null,
+        contact_ids: selectedMemberIds.map((id) => Number(id)).filter((n) => Number.isFinite(n)),
+      })
+        .then(() => {
+          toast({ title: 'Success', description: 'Segment updated successfully' });
+          setShowCreateDialog(false);
+          resetForm();
+          return fetchSegmentsAndContacts();
+        })
+        .catch((e: any) => toast({ title: 'Failed to update segment', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
     } else {
-      setSegments((prev) => [{ id: crypto.randomUUID(), name: segmentName, description: segmentDescription, filters: { customQuery: lastAiPrompt || undefined }, memberIds: selectedMemberIds, memberCount: selectedMemberIds.length, createdAt: new Date().toISOString(), createdBy: 'current_user', updatedAt: new Date().toISOString() }, ...prev]);
-      toast({ title: 'Success', description: 'Segment created successfully' });
+      const payload: any = {
+        name: segmentName,
+        description: segmentDescription || null,
+        contact_ids: selectedMemberIds.map((id) => Number(id)).filter((n) => Number.isFinite(n)),
+      };
+      if (aiPrompt.trim() && aiQueryPlan) {
+        payload.prompt = aiPrompt.trim();
+        payload.query_plan = aiQueryPlan;
+      }
+
+      apiPost('/segments', payload)
+        .then(() => {
+          toast({ title: 'Success', description: 'Segment created successfully' });
+          setShowCreateDialog(false);
+          resetForm();
+          return fetchSegmentsAndContacts();
+        })
+        .catch((e: any) => toast({ title: 'Failed to create segment', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
     }
-    setShowCreateDialog(false);
-    resetForm();
   };
 
-  const handleEdit = (segment: AudienceSegment) => {
+  const handleEdit = (segment: UiSegment) => {
     setEditingSegment(segment);
     setSegmentName(segment.name);
     setSegmentDescription(segment.description || '');
-    setSelectedMemberIds(segment.memberIds);
-    setLastAiPrompt(segment.filters.customQuery || '');
-    setShowCreateDialog(true);
+    setAiQueryPlan(null);
+    // Load members from backend for edit
+    apiGet<any>(`/segments/${segment.id}`)
+      .then((data) => {
+        const ids = (data?.contacts || []).map((c: any) => String(c.contact_id));
+        setSelectedMemberIds(ids);
+        setShowCreateDialog(true);
+      })
+      .catch((e: any) => toast({ title: 'Failed to load segment members', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
   };
 
   const handleDelete = (id: string) => {
-    setSegments((prev) => prev.filter((s) => s.id !== id));
-    toast({ title: 'Success', description: 'Segment deleted' });
+    apiDelete(`/segments/${id}`)
+      .then(() => {
+        toast({ title: 'Success', description: 'Segment deleted' });
+        return fetchSegmentsAndContacts();
+      })
+      .catch((e: any) => toast({ title: 'Failed to delete segment', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
   };
 
-  const handlePreview = (segment: AudienceSegment) => {
-    setPreviewSegment(segment);
-    setShowPreviewDialog(true);
+  const handlePreview = (segment: UiSegment) => {
+    apiGet<any>(`/segments/${segment.id}`)
+      .then((data) => {
+        const ids = (data?.contacts || []).map((c: any) => String(c.contact_id));
+        setPreviewSegment({ ...segment, memberIds: ids, memberCount: ids.length });
+        setShowPreviewDialog(true);
+      })
+      .catch((e: any) => toast({ title: 'Failed to load segment', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
   };
 
   return (
@@ -199,27 +358,46 @@ export default function AudienceSegments() {
       <section className="rounded-3xl border bg-card p-6 shadow-sm">
         <div className="mb-4 flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <Wand2 className="h-4 w-4 text-primary" />
-          AI-first segment builder
+          AI-first segments
         </div>
         <div className="grid gap-6 lg:grid-cols-[1.4fr_0.8fr] lg:items-start">
           <div className="space-y-4">
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight">What segment should AI create?</h1>
-              <p className="mt-2 text-muted-foreground">Describe the audience in plain English and review the preselected contacts before saving.</p>
+              <h1 className="text-3xl font-semibold tracking-tight">What segment should AI preselect?</h1>
+              <p className="mt-2 text-muted-foreground">Describe the audience in natural language and then review the preselected matches.</p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
-              <Input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="e.g., Build a segment of highly engaged Bangalore contacts for a VIP dinner" className="h-12 flex-1" />
-              <Button className="h-12 gap-2" onClick={() => runAiSegmentCreation()}>
+              <Input
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                placeholder="e.g., create a segment for all people who work in sales"
+                className="h-12 flex-1"
+              />
+              <Button
+                className="h-12 gap-2"
+                onClick={() => handleAiPreview()}
+                disabled={aiPreviewLoading || !aiPrompt.trim()}
+              >
                 <Sparkles className="h-4 w-4" />
-                Create with AI
+                {aiPreviewLoading ? 'Generating…' : 'Create with AI'}
               </Button>
             </div>
           </div>
+
           <div className="rounded-2xl border bg-muted/40 p-4">
-            <p className="text-sm font-medium">Try one of these</p>
+            <p className="text-sm font-medium">Suggested prompts</p>
             <div className="mt-3 flex flex-wrap gap-2">
               {aiSegmentSuggestions.map((suggestion) => (
-                <Button key={suggestion} variant="outline" size="sm" className="h-auto whitespace-normal text-left" onClick={() => { setAiPrompt(suggestion); runAiSegmentCreation(suggestion); }}>
+                <Button
+                  key={suggestion}
+                  variant="outline"
+                  size="sm"
+                  className="h-auto whitespace-normal text-left"
+                  onClick={() => {
+                    setAiPrompt(suggestion);
+                    handleAiPreview(suggestion);
+                  }}
+                >
                   {suggestion}
                 </Button>
               ))}
@@ -233,9 +411,16 @@ export default function AudienceSegments() {
           <h2 className="text-xl font-semibold">Saved segments</h2>
           <p className="text-sm text-muted-foreground">AI suggestions first, manual review second.</p>
         </div>
-        <Button variant="outline" onClick={() => { resetForm(); setShowCreateDialog(true); }}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            resetForm();
+            setShowCreateDialog(true);
+          }}
+        >
           <Plus className="mr-2 h-4 w-4" />
-          Open manual editor
+          Create segment
         </Button>
       </div>
 
@@ -276,11 +461,11 @@ export default function AudienceSegments() {
         ))}
       </div>
 
-      {filteredSegments.length === 0 && (
+      {!loading && filteredSegments.length === 0 && (
         <div className="flex flex-col items-center justify-center py-12 text-center">
           <div className="mb-4 rounded-full bg-muted p-4"><Users className="h-8 w-8 text-muted-foreground" /></div>
           <h3 className="font-semibold">No segments found</h3>
-          <p className="mt-1 text-muted-foreground">Try an AI instruction to create one.</p>
+          <p className="mt-1 text-muted-foreground">Create a segment to get started.</p>
         </div>
       )}
 
@@ -288,17 +473,15 @@ export default function AudienceSegments() {
         <DialogContent className="w-[96vw] max-w-[1500px] h-[92vh] p-0">
           <div className="dialog-shell">
             <DialogHeader className="dialog-header-tight">
-              <DialogTitle>{editingSegment ? 'Edit Segment' : 'Review AI Segment Draft'}</DialogTitle>
-              <DialogDescription>Fixed segment details are on the left so more contacts remain visible while reviewing.</DialogDescription>
+              <DialogTitle>{editingSegment ? 'Edit Segment' : 'Create Segment'}</DialogTitle>
+              <DialogDescription>
+                {editingSegment ? 'Edit segment members' : 'Describe your segment, preview matches with AI, then review and create.'}
+              </DialogDescription>
             </DialogHeader>
 
             <div className="dialog-body-scroll grid min-h-0 lg:grid-cols-[320px_minmax(0,1fr)]">
               <aside className="border-b bg-muted/30 p-5 lg:border-b-0 lg:border-r">
                 <div className="space-y-4">
-                  <div className="rounded-2xl border bg-card p-4">
-                    <div className="mb-3 flex items-center gap-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-primary" /> AI request</div>
-                    <p className="text-sm text-muted-foreground">{lastAiPrompt || 'Manual segment editing mode.'}</p>
-                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="name">Segment Name *</Label>
                     <Input id="name" value={segmentName} onChange={(e) => setSegmentName(e.target.value)} placeholder="e.g., VIP Customers" />
@@ -353,6 +536,18 @@ export default function AudienceSegments() {
                           <Badge variant="outline" className="text-xs capitalize">{c.type}</Badge>
                           <Badge variant="secondary" className="text-xs">{c.department}</Badge>
                           {c.currentCity && <Badge variant="outline" className="text-xs">{c.currentCity}</Badge>}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewContact(c.id);
+                            }}
+                          >
+                            <Eye className="mr-2 h-4 w-4" />
+                            View
+                          </Button>
                         </div>
                       </div>
                     ))}
@@ -366,6 +561,64 @@ export default function AudienceSegments() {
               <Button variant="outline" onClick={() => { resetForm(); setShowCreateDialog(false); }}>Cancel</Button>
               <Button onClick={handleSave}>{editingSegment ? 'Update Segment' : 'Create Segment'} ({selectedMemberIds.length})</Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+        <DialogContent className="w-[96vw] max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Contact details</DialogTitle>
+            <DialogDescription>{viewContact ? `${viewContact.first_name ?? ''} ${viewContact.last_name ?? ''}`.trim() : ' '}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {viewLoading ? (
+              <div className="py-10 text-center text-muted-foreground">Loading…</div>
+            ) : viewContact ? (
+              <>
+                <div className="rounded-xl border bg-card p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-base font-semibold truncate">
+                        {viewContact.first_name} {viewContact.last_name}
+                      </p>
+                      <p className="text-sm text-muted-foreground break-all">
+                        {viewContact.email || viewContact.phone || 'No email/phone'}
+                      </p>
+                    </div>
+                    <Badge variant="secondary">ID: {viewContact.contact_id}</Badge>
+                  </div>
+                  {viewContact.created_at && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Created: {new Date(viewContact.created_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-xl border bg-muted/30 p-4">
+                  <p className="text-sm font-medium mb-2">Attributes</p>
+                  {viewContact.attributes && Object.keys(viewContact.attributes).length > 0 ? (
+                    <div className="max-h-[40vh] overflow-auto pr-2">
+                      {Object.entries(viewContact.attributes).map(([k, v]) => (
+                        <div key={k} className="flex items-start justify-between gap-3 py-1 border-b last:border-b-0">
+                          <span className="text-xs text-muted-foreground">{k}</span>
+                          <span className="text-sm text-right break-all">{v as any}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No custom attributes</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="py-10 text-center text-muted-foreground">No contact selected</div>
+            )}
+          </div>
+
+          <div className="flex justify-end pt-4">
+            <Button onClick={() => setViewOpen(false)}>Close</Button>
           </div>
         </DialogContent>
       </Dialog>

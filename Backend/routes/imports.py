@@ -46,12 +46,17 @@ def _read_file(file: UploadFile) -> pd.DataFrame:
         )
 
 
-def _get_preview(df: pd.DataFrame, n: int = 5) -> dict:
-    return {
+def _get_preview(df: pd.DataFrame, n: int = 5, store_all_rows: bool = True) -> dict:
+    preview: dict = {
         "columns": list(df.columns),
         "sample_rows": df.head(n).to_dict(orient="records"),
         "total_rows": len(df),
     }
+    # We store all rows so approval can import everything (not only the preview sample).
+    # For large files, this could be heavy; but it fixes the "only 5 rows imported" bug.
+    if store_all_rows:
+        preview["all_rows"] = df.to_dict(orient="records")
+    return preview
 
 
 # ------------------------------------------------------------------ #
@@ -74,7 +79,7 @@ async def upload_import(
     if df.empty:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
-    preview = _get_preview(df)
+    preview = _get_preview(df, store_all_rows=True)
     schema = db.get_attribute_defs(org_id)
 
     # LLM maps columns
@@ -162,16 +167,14 @@ async def approve_import(
         column_mapping=body.approved_mapping,
     )
 
-    # Re-read the raw file data from preview (stored in DB)
+    # Re-read the raw file data from preview (stored in DB).
     raw_preview = job.get("raw_preview") or {}
     if isinstance(raw_preview, str):
         raw_preview = json.loads(raw_preview)
 
-    # Reconstruct DataFrame from stored preview
-    # For a real implementation you'd store the file temporarily (e.g. S3/local)
-    # Here we process from the stored sample rows as a demonstration of the pipeline.
-    # In production: store file path in job and re-read from storage here.
-    all_rows = raw_preview.get("sample_rows", [])
+    # Import the full file rows (not only the sample preview).
+    # The upload step stores all_rows when creating the import job.
+    all_rows = raw_preview.get("all_rows") or raw_preview.get("sample_rows", [])
 
     approved_mapping = body.approved_mapping
     schema = db.get_attribute_defs(org_id)

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Wand2, Sparkles, Upload } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,95 +11,123 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Event, EventAttendee, AudienceSegment } from '@/types/contact';
-import { mockContacts } from '@/data/mockData';
 import { PersonSelector } from './PersonSelector';
 
 interface CreateEventDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSave?: (event: Event) => void;
+  contacts: Array<{ id: string; firstName: string; lastName: string; email?: string; phone?: string }>;
+  segments: Array<{ id: string; name: string; memberCount: number }>;
+  initialForm?: Partial<{
+    title: string;
+    description: string;
+    location: string;
+    date: string;
+    time: string;
+    type: Event['type'];
+    isVirtual: boolean;
+    capacity: string;
+    status: 'draft' | 'scheduled' | 'completed' | 'cancelled';
+  }>;
+  initialSelectedSegments?: string[];
+  initialSelectedIndividuals?: string[];
+  initialStep?: 'details' | 'attendees';
+  aiPrompt?: string | null;
+  aiQueryPlan?: unknown;
+  onSave?: (payload: {
+    name: string;
+    description?: string;
+    location?: string;
+    event_date?: string | null;
+    status?: 'draft' | 'scheduled' | 'completed' | 'cancelled';
+    segment_ids: number[];
+    contact_ids: number[];
+    prompt?: string;
+    query_plan?: unknown;
+  }) => void;
 }
 
-const audienceSegments: AudienceSegment[] = [
-  { id: '1', name: 'Bangalore Contacts', description: '', filters: {}, memberIds: ['1', '5'], memberCount: 2, createdAt: '', createdBy: '', updatedAt: '' },
-  { id: '2', name: 'Technology Leaders', description: '', filters: {}, memberIds: ['1'], memberCount: 1, createdAt: '', createdBy: '', updatedAt: '' },
-  { id: '3', name: 'High Engagement', description: '', filters: {}, memberIds: ['1', '4'], memberCount: 2, createdAt: '', createdBy: '', updatedAt: '' },
-  { id: '4', name: 'Available Consultants', description: '', filters: {}, memberIds: ['1', '2', '4', '5'], memberCount: 4, createdAt: '', createdBy: '', updatedAt: '' },
-];
-
-const quickPrompts = [
-  'Host a Bangalore founders meetup next Thursday evening and invite high-engagement contacts',
-  'Create a virtual AI webinar for technology leaders and prefill the best attendees',
-  'Plan a workshop for medium-engagement Mumbai leads with 40 seats',
-];
-
-export function CreateEventDialog({ open, onOpenChange, onSave }: CreateEventDialogProps) {
+export function CreateEventDialog({
+  open,
+  onOpenChange,
+  onSave,
+  contacts,
+  segments,
+  initialForm,
+  initialSelectedSegments,
+  initialSelectedIndividuals,
+  initialStep,
+  aiPrompt,
+  aiQueryPlan,
+}: CreateEventDialogProps) {
   const { toast } = useToast();
   const [step, setStep] = useState<'details' | 'attendees'>('details');
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [lastAiPrompt, setLastAiPrompt] = useState('');
   const [formData, setFormData] = useState({
     title: '', description: '', type: 'meetup' as Event['type'],
     date: '', time: '', location: '', isVirtual: false, capacity: '',
+    status: 'draft' as 'draft' | 'scheduled' | 'completed' | 'cancelled',
   });
   const [selectedSegments, setSelectedSegments] = useState<string[]>([]);
   const [selectedIndividuals, setSelectedIndividuals] = useState<string[]>([]);
+  const [aiPromptState, setAiPromptState] = useState<string | null>(null);
+  const [aiQueryPlanState, setAiQueryPlanState] = useState<unknown>(null);
 
   const updateForm = (field: string, value: unknown) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const resetForm = () => {
-    setFormData({ title: '', description: '', type: 'meetup', date: '', time: '', location: '', isVirtual: false, capacity: '' });
+    setFormData({ title: '', description: '', type: 'meetup', date: '', time: '', location: '', isVirtual: false, capacity: '', status: 'draft' });
     setSelectedSegments([]);
     setSelectedIndividuals([]);
-    setAiPrompt('');
-    setLastAiPrompt('');
     setStep('details');
+    setAiPromptState(null);
+    setAiQueryPlanState(null);
   };
 
   const allAttendeeIds = useMemo(() => {
-    const segmentMemberIds = selectedSegments.flatMap((segId) => audienceSegments.find((s) => s.id === segId)?.memberIds || []);
-    return [...new Set([...segmentMemberIds, ...selectedIndividuals])];
-  }, [selectedSegments, selectedIndividuals]);
+    return [...new Set([...selectedIndividuals])];
+  }, [selectedIndividuals]);
 
-  const runAiPrefill = (prompt = aiPrompt) => {
-    if (!prompt.trim()) {
-      toast({ title: 'Add an instruction', description: 'Tell AI what event to create first.', variant: 'destructive' });
-      return;
-    }
+  const estimatedSegmentMembers = useMemo(() => {
+    const byId = new Map(segments.map((s) => [s.id, s.memberCount] as const));
+    return selectedSegments.reduce((sum, sid) => sum + (byId.get(sid) ?? 0), 0);
+  }, [selectedSegments, segments]);
 
-    const lowerPrompt = prompt.toLowerCase();
-    const isVirtual = lowerPrompt.includes('virtual') || lowerPrompt.includes('webinar') || lowerPrompt.includes('zoom');
-    const suggestedContacts = mockContacts.filter((contact) => {
-      const locationMatch = lowerPrompt.includes('bangalore') ? contact.currentCity === 'Bangalore'
-        : lowerPrompt.includes('mumbai') ? contact.currentCity === 'Mumbai'
-        : true;
-      const engagementMatch = lowerPrompt.includes('high-engagement') || lowerPrompt.includes('high engagement')
-        ? contact.engagementLevel === 'high'
-        : lowerPrompt.includes('medium-engagement') || lowerPrompt.includes('medium engagement')
-          ? contact.engagementLevel === 'medium'
-          : true;
-      const departmentMatch = lowerPrompt.includes('technology') || lowerPrompt.includes('tech') ? contact.department === 'Technology' : true;
-      return locationMatch && engagementMatch && departmentMatch;
-    });
+  useEffect(() => {
+    if (!open) return;
+
+    const derivedIsVirtual =
+      initialForm?.isVirtual ??
+      (initialForm?.location
+        ? initialForm.location.toLowerCase().includes('zoom') || initialForm.location.toLowerCase().includes('meet')
+        : false);
 
     setFormData({
-      title: lowerPrompt.includes('webinar') ? 'AI Webinar Draft' : lowerPrompt.includes('workshop') ? 'AI Workshop Draft' : 'AI Event Draft',
-      description: `AI prepared this event from: ${prompt}`,
-      type: lowerPrompt.includes('webinar') ? 'webinar' : lowerPrompt.includes('workshop') ? 'workshop' : lowerPrompt.includes('conference') ? 'conference' : 'meetup',
-      date: new Date().toISOString().split('T')[0],
-      time: lowerPrompt.includes('evening') ? '18:00' : '10:00',
-      location: isVirtual ? 'Zoom' : lowerPrompt.includes('bangalore') ? 'Bangalore' : lowerPrompt.includes('mumbai') ? 'Mumbai' : 'Main Venue',
-      isVirtual,
-      capacity: lowerPrompt.includes('40') ? '40' : lowerPrompt.includes('100') ? '100' : '50',
+      title: initialForm?.title ?? '',
+      description: initialForm?.description ?? '',
+      type: initialForm?.type ?? ('meetup' as Event['type']),
+      date: initialForm?.date ?? '',
+      time: initialForm?.time ?? '',
+      location: initialForm?.location ?? '',
+      isVirtual: derivedIsVirtual,
+      capacity: initialForm?.capacity ?? '',
+      status: initialForm?.status ?? 'draft',
     });
-    setSelectedIndividuals(suggestedContacts.map((contact) => contact.id));
-    setSelectedSegments([]);
-    setLastAiPrompt(prompt);
-    setStep('details');
-    toast({ title: 'AI draft ready', description: `${suggestedContacts.length} attendees were prefilled for review.` });
-  };
+    setSelectedSegments(initialSelectedSegments ?? []);
+    setSelectedIndividuals(initialSelectedIndividuals ?? []);
+    setStep(initialStep ?? 'details');
+    setAiPromptState(aiPrompt ?? null);
+    setAiQueryPlanState(aiQueryPlan ?? null);
+  }, [
+    open,
+    initialForm,
+    initialSelectedSegments,
+    initialSelectedIndividuals,
+    initialStep,
+    aiPrompt,
+    aiQueryPlan,
+  ]);
 
   const handleNext = () => {
     if (!formData.title || !formData.date || !formData.time || !formData.location) {
@@ -111,38 +139,23 @@ export function CreateEventDialog({ open, onOpenChange, onSave }: CreateEventDia
 
   const handleSubmit = () => {
     const attendees: EventAttendee[] = allAttendeeIds.map((id) => {
-      const contact = mockContacts.find((a) => a.id === id);
+      const contact = contacts.find((a) => a.id === id);
       return { contactId: id, name: contact ? `${contact.firstName} ${contact.lastName}` : 'Unknown', email: contact?.email || '', inviteSent: false, confirmed: false, attended: false, addedLater: false };
     });
 
-    const event: Event = {
-      id: crypto.randomUUID(),
-      title: formData.title,
-      description: formData.description,
-      type: formData.type,
-      date: formData.date,
-      time: formData.time,
-      location: formData.location,
-      isVirtual: formData.isVirtual,
-      capacity: formData.capacity ? parseInt(formData.capacity) : undefined,
-      targetAudience: selectedSegments.map((id) => audienceSegments.find((s) => s.id === id)?.name || ''),
-      recommendedContacts: allAttendeeIds,
-      attendees,
-      invitedCount: attendees.length,
-      confirmedCount: 0,
-      attendedCount: 0,
-      status: 'draft',
-      emailsSent: 0,
-      emailsOpened: 0,
-      emailsClicked: 0,
-      whatsappSent: 0,
-      whatsappRead: 0,
-      createdAt: new Date().toISOString(),
-      createdBy: 'current_user',
-    };
-
-    onSave?.(event);
-    toast({ title: 'Success', description: 'Event created successfully' });
+    const dt = new Date(`${formData.date}T${formData.time}:00`);
+    const eventDateIso = Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+    onSave?.({
+      name: formData.title,
+      description: formData.description || undefined,
+      location: formData.location || undefined,
+      event_date: eventDateIso,
+      status: formData.status,
+      segment_ids: selectedSegments.map((s) => Number(s)).filter((n) => Number.isFinite(n)),
+      contact_ids: allAttendeeIds.map((id) => Number(id)).filter((n) => Number.isFinite(n)),
+      prompt: aiPromptState || undefined,
+      query_plan: aiQueryPlanState ?? undefined,
+    });
     onOpenChange(false);
     resetForm();
   };
@@ -152,8 +165,8 @@ export function CreateEventDialog({ open, onOpenChange, onSave }: CreateEventDia
       <DialogContent className="w-[96vw] max-w-[1500px] h-[92vh] p-0">
         <div className="dialog-shell">
           <DialogHeader className="dialog-header-tight">
-            <DialogTitle>{step === 'details' ? 'Create Event with AI' : 'Review Attendees'}</DialogTitle>
-            <DialogDescription>{step === 'details' ? 'Natural language comes first. Review the AI draft before saving.' : 'Attendees are already prefilled — adjust only if needed.'}</DialogDescription>
+            <DialogTitle>{step === 'details' ? 'Create Event' : 'Select Attendees'}</DialogTitle>
+            <DialogDescription>{step === 'details' ? 'Enter event details, then select invitees.' : 'Select segments and individuals for the invite list.'}</DialogDescription>
           </DialogHeader>
 
           <div className="dialog-body-scroll">
@@ -162,23 +175,9 @@ export function CreateEventDialog({ open, onOpenChange, onSave }: CreateEventDia
                 <div className="border-b p-6 lg:border-b-0 lg:border-r">
                   <div className="space-y-5">
                     <div className="rounded-3xl border bg-muted/40 p-5">
-                      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-muted-foreground"><Wand2 className="h-4 w-4 text-primary" /> AI event command</div>
-                      <h3 className="text-2xl font-semibold">Describe the event and let AI draft it.</h3>
-                      <p className="mt-2 text-sm text-muted-foreground">AI will prefill title, format, location, timing, and attendees before you review.</p>
-                      <div className="mt-4 flex flex-col gap-3">
-                        <Input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="e.g., Host a virtual AI webinar for technology leaders next week" className="h-12" />
-                        <Button className="h-12 gap-2" onClick={() => runAiPrefill()}><Sparkles className="h-4 w-4" />Generate event draft</Button>
-                      </div>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {quickPrompts.map((prompt) => (
-                          <Button key={prompt} variant="outline" size="sm" className="h-auto whitespace-normal text-left" onClick={() => { setAiPrompt(prompt); runAiPrefill(prompt); }}>{prompt}</Button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl border bg-card p-4">
-                      <p className="text-sm font-medium">Last AI instruction</p>
-                      <p className="mt-2 text-sm text-muted-foreground">{lastAiPrompt || 'No AI instruction yet.'}</p>
+                      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-muted-foreground"><Upload className="h-4 w-4 text-primary" /> Manual creation</div>
+                      <h3 className="text-2xl font-semibold">Enter the event details.</h3>
+                      <p className="mt-2 text-sm text-muted-foreground">You’ll pick attendees in the next step.</p>
                     </div>
                   </div>
                 </div>
@@ -238,31 +237,68 @@ export function CreateEventDialog({ open, onOpenChange, onSave }: CreateEventDia
                     <div className="rounded-2xl border bg-card p-4">
                       <div className="flex items-center justify-between">
                         <p className="text-sm font-medium">Prefilled attendees</p>
-                        <Badge variant="secondary">{allAttendeeIds.length}</Badge>
+                        <Badge variant="secondary">{estimatedSegmentMembers + allAttendeeIds.length}</Badge>
                       </div>
-                      <p className="mt-2 text-sm text-muted-foreground">AI will send you to the attendee review step next.</p>
+                      <p className="mt-2 text-sm text-muted-foreground">You’ll select the attendee list next.</p>
                     </div>
                   </div>
                 </ScrollArea>
               </div>
             ) : (
-              <div className="flex h-full min-h-0 flex-col p-6 pt-5">
-                <PersonSelector
-                  selectedSegments={selectedSegments}
-                  selectedIndividuals={selectedIndividuals}
-                  onSegmentsChange={setSelectedSegments}
-                  onIndividualsChange={setSelectedIndividuals}
-                  audienceSegments={audienceSegments}
-                  className="flex-1 min-h-0"
-                />
-                <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_280px]">
-                  <div className="rounded-2xl border bg-card p-4">
-                    <p className="text-sm font-medium">Event prompt</p>
-                    <p className="mt-2 text-sm text-muted-foreground">{lastAiPrompt || 'Manual attendee selection.'}</p>
+              <div className="flex min-h-0 flex-1 flex-col p-6 pt-5">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-semibold">Select Attendees</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">Choose segments and/or individuals for the invite list.</p>
                   </div>
-                  <div className="rounded-2xl border bg-muted/40 p-4">
-                    <div className="flex items-center justify-between"><p className="text-sm font-medium">Total attendees</p><Badge variant="secondary">{allAttendeeIds.length}</Badge></div>
-                    <p className="mt-2 text-sm text-muted-foreground">{selectedSegments.length} segments + {selectedIndividuals.length} individuals selected.</p>
+                  <Badge variant="secondary">{estimatedSegmentMembers + selectedIndividuals.length} total</Badge>
+                </div>
+
+                <div className="min-h-0 flex-1 grid gap-4 lg:grid-cols-[1fr_320px]">
+                  <div className="min-h-0">
+                    <PersonSelector
+                      selectedSegments={selectedSegments}
+                      selectedIndividuals={selectedIndividuals}
+                      onSegmentsChange={setSelectedSegments}
+                      onIndividualsChange={setSelectedIndividuals}
+                      audienceSegments={segments.map((s) => ({
+                        id: s.id,
+                        name: s.name,
+                        description: '',
+                        filters: {},
+                        memberIds: [],
+                        memberCount: s.memberCount,
+                        createdAt: '',
+                        createdBy: '',
+                        updatedAt: '',
+                      }))}
+                      contacts={contacts}
+                      className="h-full min-h-0"
+                    />
+                  </div>
+
+                  <div className="min-h-0 flex flex-col gap-3">
+                    <div className="rounded-2xl border bg-card p-4">
+                      <p className="text-sm font-medium">Invite list</p>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {selectedIndividuals.length} individuals selected directly.
+                      </p>
+                      {selectedSegments.length > 0 && (
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {selectedSegments.length} segments selected ({estimatedSegmentMembers} estimated members).
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="rounded-2xl border bg-muted/40 p-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium">Total attendees</p>
+                        <Badge variant="secondary">{estimatedSegmentMembers + selectedIndividuals.length}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {selectedSegments.length} segments + {selectedIndividuals.length} individuals selected.
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -273,7 +309,7 @@ export function CreateEventDialog({ open, onOpenChange, onSave }: CreateEventDia
             {step === 'attendees' ? <Button variant="outline" onClick={() => setStep('details')}>Back</Button> : <div />}
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }}>Cancel</Button>
-              {step === 'details' ? <Button onClick={handleNext}>Next: Review Attendees</Button> : <Button onClick={handleSubmit}>Create Event ({allAttendeeIds.length})</Button>}
+              {step === 'details' ? <Button onClick={handleNext}>Next: Review Attendees</Button> : <Button onClick={handleSubmit}>Create Event ({estimatedSegmentMembers + selectedIndividuals.length})</Button>}
             </div>
           </div>
         </div>

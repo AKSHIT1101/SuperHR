@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Bell, Calendar, User, CheckCircle, Sparkles, Edit2, Trash2, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,11 +8,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { CreateReminderDialog } from '@/components/dialogs/CreateReminderDialog';
 import { EditReminderDialog } from '@/components/dialogs/EditReminderDialog';
-import { mockTasks } from '@/data/mockData';
 import { Task } from '@/types/contact';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 const aiReminderSuggestions = [
   'Remind me tomorrow to follow up with everyone who attended the AI webinar',
@@ -22,14 +23,17 @@ const aiReminderSuggestions = [
 
 export default function Reminders() {
   const { toast } = useToast();
+  const { user, isAdmin } = useAuth();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
-  const [tasks, setTasks] = useState<Task[]>(mockTasks);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [completingTask, setCompletingTask] = useState<Task | null>(null);
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [assignableUsers, setAssignableUsers] = useState<{ id: string; name: string; role: 'admin' | 'manager' | 'user'; email?: string }[]>([]);
 
   const filteredTasks = tasks.filter((task) => {
     if (activeTab === 'all') return true;
@@ -44,19 +48,130 @@ export default function Reminders() {
   const priorityStyles = { high: 'border-l-destructive bg-destructive/5', medium: 'border-l-warning bg-warning/5', low: 'border-l-muted' };
   const priorityBadgeStyles = { high: 'bg-destructive/10 text-destructive', medium: 'bg-warning/10 text-warning', low: 'bg-muted text-muted-foreground' };
 
-  const handleTaskCheck = (task: Task) => { if (task.status !== 'completed') { setCompletingTask(task); setShowCompletionDialog(true); } else { setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: 'pending' as const } : t))); } };
+  const fetchReminders = async () => {
+    setLoading(true);
+    try {
+      const rows = await apiGet<any[]>('/reminders');
+      const mapped: Task[] = (rows || []).map((r: any) => {
+        const dueAtIso = r.due_at ? new Date(r.due_at).toISOString() : '';
+        const dueDate = dueAtIso ? dueAtIso.slice(0, 10) : new Date().toISOString().slice(0, 10);
+        const assignedToUserId = r.assigned_to ? String(r.assigned_to) : '';
+        const assignedToName =
+          assignedToUserId && user?.id && assignedToUserId === user.id
+            ? 'You'
+            : (r.assigned_to_name || '').trim() || assignedToUserId || 'You';
+
+        return {
+          id: String(r.reminder_id),
+          title: r.title,
+          description: r.description || '',
+          type: 'reminder',
+          priority: 'medium',
+          status: r.is_done ? 'completed' : 'pending',
+          dueDate,
+          assignedTo: assignedToName,
+          isAIGenerated: false,
+          createdAt: r.created_at || new Date().toISOString(),
+          // internal fields used by edit dialog
+          ...(dueAtIso ? { _dueAtIso: dueAtIso } : {}),
+          ...(assignedToUserId ? { _assignedToUserId: assignedToUserId } : {}),
+        } as any;
+      });
+      setTasks(mapped);
+    } catch (e: any) {
+      toast({ title: 'Failed to load reminders', description: e?.message ?? 'Unknown error', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchReminders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    apiGet<any[]>('/users')
+      .then((rows) => {
+        const mapped = (rows || []).map((u: any) => ({
+          id: String(u.user_id),
+          name: (u.first_name || u.last_name) ? `${u.first_name || ''} ${u.last_name || ''}`.trim() : u.email,
+          role: (u.role || 'user') as any,
+          email: u.email,
+        }));
+        setAssignableUsers(mapped);
+      })
+      .catch(() => setAssignableUsers([]));
+  }, [isAdmin]);
+
+  const handleTaskCheck = (task: Task) => {
+    if (task.status !== 'completed') {
+      setCompletingTask(task);
+      setShowCompletionDialog(true);
+    } else {
+      // Re-open (mark not done)
+      apiPatch(`/reminders/${task.id}`, { is_done: false })
+        .then(() => fetchReminders())
+        .catch((e: any) => toast({ title: 'Failed to update reminder', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
+    }
+  };
+
   const handleCompleteTask = (notifyManager: boolean, deleteTask: boolean) => {
     if (!completingTask) return;
-    if (deleteTask) { setTasks((prev) => prev.filter((t) => t.id !== completingTask.id)); toast({ title: 'Task Deleted' }); }
-    else { setTasks((prev) => prev.map((t) => t.id === completingTask.id ? { ...t, status: 'completed' as const } : t)); toast({ title: 'Task Completed' }); }
-    if (notifyManager) toast({ title: 'Manager Notified' });
-    setShowCompletionDialog(false); setCompletingTask(null);
+    const id = completingTask.id;
+    const op = deleteTask
+      ? apiDelete(`/reminders/${id}`).then(() => toast({ title: 'Reminder deleted' }))
+      : apiPatch(`/reminders/${id}`, { is_done: true }).then(() => toast({ title: 'Reminder completed' }));
+
+    op
+      .then(() => {
+        if (notifyManager) toast({ title: 'Manager Notified' });
+        return fetchReminders();
+      })
+      .catch((e: any) => toast({ title: 'Failed to update reminder', description: e?.message ?? 'Unknown error', variant: 'destructive' }))
+      .finally(() => {
+        setShowCompletionDialog(false);
+        setCompletingTask(null);
+      });
   };
   const handleEditTask = (task: Task) => { setEditingTask(task); setShowEditDialog(true); };
-  const handleUpdateTask = (updatedTask: Task) => { setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t))); toast({ title: 'Updated' }); };
-  const handleDeleteTask = (id: string) => { setTasks((prev) => prev.filter((t) => t.id !== id)); toast({ title: 'Deleted' }); };
-  const handleSaveReminder = (reminder: any) => { setTasks((prev) => [{ ...reminder, status: 'pending' as const, assignedTo: reminder.assignedTo === 'self' ? 'You' : reminder.assignedTo, createdAt: new Date().toISOString() }, ...prev]); };
-  const taskCounts = { all: tasks.length, pending: tasks.filter((t) => t.status === 'pending').length, 'in-progress': tasks.filter((t) => t.status === 'in-progress').length, completed: tasks.filter((t) => t.status === 'completed').length, ai: tasks.filter((t) => t.isAIGenerated).length, self: tasks.filter((t) => !t.isAIGenerated).length };
+  const handleUpdateTask = (update: any) => {
+    if (!editingTask) return;
+    apiPatch(`/reminders/${editingTask.id}`, update)
+      .then(() => {
+        toast({ title: 'Updated' });
+        setShowEditDialog(false);
+        setEditingTask(null);
+        return fetchReminders();
+      })
+      .catch((e: any) => toast({ title: 'Failed to update', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
+  };
+  const handleDeleteTask = (id: string) => {
+    apiDelete(`/reminders/${id}`)
+      .then(() => {
+        toast({ title: 'Deleted' });
+        return fetchReminders();
+      })
+      .catch((e: any) => toast({ title: 'Failed to delete', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
+  };
+  const handleSaveReminder = (reminder: any) => {
+    apiPost('/reminders', reminder)
+      .then(() => {
+        toast({ title: 'Reminder created' });
+        return fetchReminders();
+      })
+      .catch((e: any) => toast({ title: 'Failed to create reminder', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
+  };
+
+  const taskCounts = useMemo(() => ({
+    all: tasks.length,
+    pending: tasks.filter((t) => t.status === 'pending').length,
+    'in-progress': tasks.filter((t) => t.status === 'in-progress').length,
+    completed: tasks.filter((t) => t.status === 'completed').length,
+    ai: tasks.filter((t) => t.isAIGenerated).length,
+    self: tasks.filter((t) => !t.isAIGenerated).length,
+  }), [tasks]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -88,7 +203,11 @@ export default function Reminders() {
       <Card className="nudge-card border-l-4 border-l-primary"><CardContent className="flex items-start gap-3 pt-4"><div className="rounded-lg bg-primary/10 p-2"><Sparkles className="h-5 w-5 text-primary" /></div><div className="flex-1"><h4 className="font-medium">AI-Generated Tasks</h4><p className="mt-1 text-sm text-muted-foreground">Based on engagement patterns, we've suggested {taskCounts.ai} tasks that need attention.</p></div></CardContent></Card>
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="flex-wrap"><TabsTrigger value="all" className="gap-2">All <Badge variant="secondary">{taskCounts.all}</Badge></TabsTrigger><TabsTrigger value="self" className="gap-2"><User className="h-3 w-3" />Self <Badge variant="secondary">{taskCounts.self}</Badge></TabsTrigger><TabsTrigger value="ai" className="gap-2"><Sparkles className="h-3 w-3" />AI <Badge variant="secondary">{taskCounts.ai}</Badge></TabsTrigger><TabsTrigger value="pending" className="gap-2">Pending <Badge variant="secondary">{taskCounts.pending}</Badge></TabsTrigger><TabsTrigger value="in-progress" className="gap-2">In Progress <Badge variant="secondary">{taskCounts['in-progress']}</Badge></TabsTrigger><TabsTrigger value="completed" className="gap-2">Completed <Badge variant="secondary">{taskCounts.completed}</Badge></TabsTrigger></TabsList>
-        <TabsContent value={activeTab} className="mt-6"><div className="space-y-3">{filteredTasks.map((task) => (
+        <TabsContent value={activeTab} className="mt-6">
+          {loading ? (
+            <div className="py-10 text-center text-muted-foreground">Loading reminders…</div>
+          ) : (
+          <div className="space-y-3">{filteredTasks.map((task) => (
           <div key={task.id} className={cn('rounded-lg border border-l-4 p-4 transition-all hover:shadow-sm', priorityStyles[task.priority], task.status === 'completed' && 'opacity-60')}>
             <div className="flex items-start gap-3">
               <Checkbox checked={task.status === 'completed'} onCheckedChange={() => handleTaskCheck(task)} className="mt-1" />
@@ -103,10 +222,25 @@ export default function Reminders() {
               </div>
             </div>
           </div>
-        ))}{filteredTasks.length === 0 && <div className="flex flex-col items-center justify-center py-12 text-center"><div className="mb-4 rounded-full bg-muted p-4"><Bell className="h-8 w-8 text-muted-foreground" /></div><h3 className="font-semibold">No tasks found</h3><p className="mt-1 text-muted-foreground">Try creating one with AI.</p></div>}</div></TabsContent>
+        ))}{filteredTasks.length === 0 && <div className="flex flex-col items-center justify-center py-12 text-center"><div className="mb-4 rounded-full bg-muted p-4"><Bell className="h-8 w-8 text-muted-foreground" /></div><h3 className="font-semibold">No reminders found</h3><p className="mt-1 text-muted-foreground">Create one to get started.</p></div>}</div>
+          )}
+        </TabsContent>
       </Tabs>
-      <CreateReminderDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} onSave={handleSaveReminder} />
-      <EditReminderDialog task={editingTask} open={showEditDialog} onOpenChange={setShowEditDialog} onSave={handleUpdateTask} />
+      <CreateReminderDialog
+        open={showCreateDialog}
+        onOpenChange={setShowCreateDialog}
+        onSave={handleSaveReminder}
+        assignableUsers={assignableUsers}
+        canAssignToOthers={isAdmin}
+      />
+      <EditReminderDialog
+        task={editingTask}
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+        onSave={handleUpdateTask}
+        assignableUsers={assignableUsers}
+        canAssignToOthers={isAdmin}
+      />
       <AlertDialog open={showCompletionDialog} onOpenChange={setShowCompletionDialog}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle className="flex items-center gap-2"><CheckCircle className="h-5 w-5 text-success" />Complete Task</AlertDialogTitle><AlertDialogDescription>You're marking "{completingTask?.title}" as complete.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter className="flex-col gap-2 sm:flex-row"><AlertDialogCancel>Cancel</AlertDialogCancel><Button variant="outline" onClick={() => handleCompleteTask(true, false)}>Complete & Notify</Button><Button variant="outline" onClick={() => handleCompleteTask(false, true)}>Complete & Delete</Button><AlertDialogAction onClick={() => handleCompleteTask(false, false)}>Just Complete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
   );

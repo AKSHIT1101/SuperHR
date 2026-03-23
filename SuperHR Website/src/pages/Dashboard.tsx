@@ -150,10 +150,10 @@ export default function Dashboard() {
       {/* Main Content Grid */}
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
-          <EngagementChart />
+          <EngagementChart data={mockMetrics.engagementTrend} />
           <div className="grid gap-6 sm:grid-cols-2">
-            <ContactTypeChart />
-            <EventPerformanceChart />
+            <ContactTypeChart title="Contacts by Type" data={mockMetrics.contactsByType} />
+            <EventPerformanceChart data={mockMetrics.eventPerformance} />
           </div>
         </div>
 

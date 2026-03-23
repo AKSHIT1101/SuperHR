@@ -19,15 +19,17 @@ Invite flow:
 import secrets
 from typing import Optional
 from urllib.parse import urlencode
+from datetime import datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
+from jose import jwt
 
 from core.config import settings
 from core.database import DatabaseManager
-from core.dependencies import create_access_token, get_current_user, get_db, require_admin
+from core.dependencies import create_access_token, decode_token, get_current_user, get_db, require_admin
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -98,6 +100,12 @@ def _make_token_response(user: dict) -> TokenResponse:
         email=user["email"],
     )
 
+def _create_decision_token(payload: dict, minutes: int = 15) -> str:
+    data = payload.copy()
+    data["purpose"] = "invite_decision"
+    data["exp"] = datetime.utcnow() + timedelta(minutes=minutes)
+    return jwt.encode(data, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
 
 # ------------------------------------------------------------------ #
 #  OAuth endpoints                                                     #
@@ -150,57 +158,45 @@ async def google_callback(
     invite = db.execute_query(
         """
         SELECT * FROM invitations
-        WHERE email = %s AND used = FALSE AND expires_at > NOW()
+        WHERE email = %s AND used = FALSE AND status = 'pending' AND expires_at > NOW()
         ORDER BY created_at DESC LIMIT 1
         """,
         (email,),
         fetch="one",
     )
 
-    # Case B — new user with a valid invite
+    # Case B — new user with a valid invite: require accept/decline in frontend
     if invite:
-        user = db.execute_query(
-            """
-            INSERT INTO users
-                (org_id, email, first_name, last_name, role, google_sub, is_active)
-            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
-            RETURNING *
-            """,
-            (invite["org_id"], email, first_name, last_name, invite["role"], google_sub),
-            fetch="one",
+        decision_token = _create_decision_token(
+            {
+                "email": email,
+                "first_name": first_name,
+                "last_name": last_name,
+                "google_sub": google_sub,
+                "invitation_id": invite["invitation_id"],
+                "invite_token": invite["token"],
+                "inviter_org_id": invite["org_id"],
+                "invited_role": invite["role"],
+            }
         )
-        db.execute_query(
-            "UPDATE invitations SET used = TRUE, updated_at = NOW() WHERE invitation_id = %s",
-            (invite["invitation_id"],),
-            fetch="none",
-        )
-        token_resp = _make_token_response(user)
-        redirect_url = f"{settings.FRONTEND_BASE_URL}/auth/callback?token={token_resp.access_token}"
+        redirect_url = f"{settings.FRONTEND_BASE_URL}/invite?decision_token={decision_token}"
         return RedirectResponse(url=redirect_url)
 
-    # Case C — no users exist yet: bootstrap first admin
-    any_user = db.execute_query("SELECT 1 FROM users LIMIT 1", fetch="one")
-    if not any_user:
-        org = db.create_organization(f"{first_name or email}'s Organisation")
-        user = db.execute_query(
-            """
-            INSERT INTO users
-                (org_id, email, first_name, last_name, role, google_sub, is_active)
-            VALUES (%s, %s, %s, %s, 'admin', %s, TRUE)
-            RETURNING *
-            """,
-            (org["org_id"], email, first_name, last_name, google_sub),
-            fetch="one",
-        )
-        token_resp = _make_token_response(user)
-        redirect_url = f"{settings.FRONTEND_BASE_URL}/auth/callback?token={token_resp.access_token}"
-        return RedirectResponse(url=redirect_url)
-
-    # Case D — uninvited new user
-    raise HTTPException(
-        status_code=403,
-        detail="No invitation found for this email. Ask your admin to invite you.",
+    # Case C/D — new user not invited: create a new org for them
+    org = db.create_organization(f"{first_name or email}'s Organisation")
+    user = db.execute_query(
+        """
+        INSERT INTO users
+            (org_id, email, first_name, last_name, role, google_sub, is_active)
+        VALUES (%s, %s, %s, %s, 'admin', %s, TRUE)
+        RETURNING *
+        """,
+        (org["org_id"], email, first_name, last_name, google_sub),
+        fetch="one",
     )
+    token_resp = _make_token_response(user)
+    redirect_url = f"{settings.FRONTEND_BASE_URL}/auth/callback?token={token_resp.access_token}"
+    return RedirectResponse(url=redirect_url)
 
 
 # ------------------------------------------------------------------ #
@@ -229,12 +225,14 @@ def invite_user(
 
     invite = db.execute_query(
         """
-        INSERT INTO invitations (org_id, invited_by, email, role, token)
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO invitations (org_id, invited_by, email, role, token, status, used)
+        VALUES (%s, %s, %s, %s, %s, 'pending', FALSE)
         ON CONFLICT (org_id, email) DO UPDATE
             SET token      = EXCLUDED.token,
                 role       = EXCLUDED.role,
                 used       = FALSE,
+                status     = 'pending',
+                responded_at = NULL,
                 expires_at = NOW() + INTERVAL '7 days',
                 updated_at = NOW()
         RETURNING invitation_id, email, role, token, expires_at
@@ -258,6 +256,161 @@ def invite_user(
 @router.get("/me", summary="Get the current authenticated user")
 def me(current_user = Depends(get_current_user)):
     return current_user
+
+
+# ------------------------------------------------------------------ #
+#  Invite decision                                                     #
+# ------------------------------------------------------------------ #
+
+class DecisionRequest(BaseModel):
+    decision_token: str
+
+
+@router.post("/invite/accept", summary="Accept an invitation and join inviter org")
+def accept_invite(
+    body: DecisionRequest,
+    db: DatabaseManager = Depends(get_db),
+):
+    payload = decode_token(body.decision_token)
+    if payload.get("purpose") != "invite_decision":
+        raise HTTPException(status_code=400, detail="Invalid decision token")
+
+    email = payload.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Invalid decision token payload")
+
+    # If user already exists, do not allow joining another org.
+    if db.get_user_by_email(email):
+        raise HTTPException(status_code=400, detail="This email is already registered")
+
+    invite = db.execute_query(
+        """
+        SELECT * FROM invitations
+        WHERE invitation_id = %s AND token = %s
+          AND used = FALSE AND status = 'pending' AND expires_at > NOW()
+        """,
+        (payload.get("invitation_id"), payload.get("invite_token")),
+        fetch="one",
+    )
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invitation not found or expired")
+
+    user = db.execute_query(
+        """
+        INSERT INTO users
+            (org_id, email, first_name, last_name, role, google_sub, is_active)
+        VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+        RETURNING *
+        """,
+        (
+            invite["org_id"],
+            email,
+            payload.get("first_name", ""),
+            payload.get("last_name", ""),
+            invite["role"],
+            payload.get("google_sub"),
+        ),
+        fetch="one",
+    )
+    db.execute_query(
+        """
+        UPDATE invitations
+        SET used = TRUE, status = 'accepted', responded_at = NOW(), updated_at = NOW()
+        WHERE invitation_id = %s
+        """,
+        (invite["invitation_id"],),
+        fetch="none",
+    )
+    return _make_token_response(user)
+
+
+@router.post("/invite/decline", summary="Decline invitation and create a new org")
+def decline_invite(
+    body: DecisionRequest,
+    db: DatabaseManager = Depends(get_db),
+):
+    payload = decode_token(body.decision_token)
+    if payload.get("purpose") != "invite_decision":
+        raise HTTPException(status_code=400, detail="Invalid decision token")
+
+    email = payload.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Invalid decision token payload")
+
+    if db.get_user_by_email(email):
+        raise HTTPException(status_code=400, detail="This email is already registered")
+
+    invite = db.execute_query(
+        """
+        SELECT * FROM invitations
+        WHERE invitation_id = %s AND token = %s
+          AND used = FALSE AND status = 'pending' AND expires_at > NOW()
+        """,
+        (payload.get("invitation_id"), payload.get("invite_token")),
+        fetch="one",
+    )
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invitation not found or expired")
+
+    # Invalidate the invite
+    db.execute_query(
+        """
+        UPDATE invitations
+        SET used = TRUE, status = 'declined', responded_at = NOW(), updated_at = NOW()
+        WHERE invitation_id = %s
+        """,
+        (invite["invitation_id"],),
+        fetch="none",
+    )
+
+    # Create a new org for this email and make them admin
+    org = db.create_organization(f"{payload.get('first_name') or email}'s Organisation")
+    user = db.execute_query(
+        """
+        INSERT INTO users
+            (org_id, email, first_name, last_name, role, google_sub, is_active)
+        VALUES (%s, %s, %s, %s, 'admin', %s, TRUE)
+        RETURNING *
+        """,
+        (org["org_id"], email, payload.get("first_name", ""), payload.get("last_name", ""), payload.get("google_sub")),
+        fetch="one",
+    )
+    return _make_token_response(user)
+
+
+# ------------------------------------------------------------------ #
+#  Leave organization                                                  #
+# ------------------------------------------------------------------ #
+
+@router.post("/leave-org", summary="Leave current organization")
+def leave_org(
+    db: DatabaseManager = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    # Admin leaving deletes the entire org (and all data) via cascade.
+    if current_user["role"] == "admin":
+        db.execute_query(
+            "DELETE FROM organizations WHERE org_id = %s RETURNING org_id",
+            (current_user["org_id"],),
+            fetch="one",
+        )
+        return {"message": "organization_deleted"}
+
+    # Non-admin: move user into a new personal org and promote to admin.
+    email = current_user["email"]
+    org = db.create_organization(f"{(current_user.get('first_name') or email)}'s Organisation")
+    user = db.execute_query(
+        """
+        UPDATE users
+        SET org_id = %s, role = 'admin', updated_at = NOW()
+        WHERE user_id = %s
+        RETURNING *
+        """,
+        (org["org_id"], current_user["user_id"]),
+        fetch="one",
+    )
+    token_resp = _make_token_response(user)
+    return token_resp
 
 
 @router.get("/setup-status", summary="Get whether the org has completed initial contact schema setup")

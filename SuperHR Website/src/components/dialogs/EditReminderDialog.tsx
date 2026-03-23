@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
-import { Bell, Calendar, User, Users } from 'lucide-react';
+import { useMemo, useState, useEffect } from 'react';
+import { Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -21,37 +20,57 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Task } from '@/types/alumni';
-import { mockUsers } from '@/data/mockData';
+type AssignableUser = { id: string; name: string; role: 'admin' | 'manager' | 'user'; email?: string };
 
 interface EditReminderDialogProps {
   task: Task | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSave?: (task: Task) => void;
+  assignableUsers?: AssignableUser[];
+  canAssignToOthers?: boolean;
+  onSave?: (update: {
+    title?: string;
+    description?: string;
+    due_at?: string | null;
+    is_done?: boolean;
+    assigned_to?: string | null;
+  }) => void;
 }
 
-export function EditReminderDialog({ task, open, onOpenChange, onSave }: EditReminderDialogProps) {
+export function EditReminderDialog({
+  task,
+  open,
+  onOpenChange,
+  onSave,
+  assignableUsers = [],
+  canAssignToOthers = false,
+}: EditReminderDialogProps) {
   const { toast } = useToast();
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    type: 'follow-up',
-    priority: 'medium',
     dueDate: '',
     status: 'pending',
-    assignedTo: '',
+    dueTime: '',
+    assignToSelf: true,
+    assignedToId: '',
   });
 
   useEffect(() => {
     if (task) {
+      const anyTask = task as any;
+      const dueAt = anyTask._dueAtIso ? new Date(anyTask._dueAtIso) : (task.dueDate ? new Date(task.dueDate) : null);
+      const dueDate = dueAt && !Number.isNaN(dueAt.getTime()) ? dueAt.toISOString().slice(0, 10) : task.dueDate;
+      const dueTime = dueAt && !Number.isNaN(dueAt.getTime()) ? dueAt.toISOString().slice(11, 16) : '';
+
       setFormData({
         title: task.title,
         description: task.description,
-        type: task.type,
-        priority: task.priority,
-        dueDate: task.dueDate,
+        dueDate,
         status: task.status,
-        assignedTo: task.assignedTo,
+        dueTime,
+        assignToSelf: !anyTask._assignedToUserId,
+        assignedToId: anyTask._assignedToUserId ? String(anyTask._assignedToUserId) : '',
       });
     }
   }, [task]);
@@ -59,6 +78,14 @@ export function EditReminderDialog({ task, open, onOpenChange, onSave }: EditRem
   const updateForm = (field: string, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
+
+  const dueAtIso = useMemo(() => {
+    if (!formData.dueDate) return null;
+    const time = formData.dueTime || '09:00';
+    const dt = new Date(`${formData.dueDate}T${time}:00`);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toISOString();
+  }, [formData.dueDate, formData.dueTime]);
 
   const handleSubmit = () => {
     if (!formData.title || !formData.dueDate) {
@@ -71,18 +98,13 @@ export function EditReminderDialog({ task, open, onOpenChange, onSave }: EditRem
     }
 
     if (task) {
-      const updatedTask: Task = {
-        ...task,
+      onSave?.({
         title: formData.title,
         description: formData.description,
-        type: formData.type as Task['type'],
-        priority: formData.priority as Task['priority'],
-        dueDate: formData.dueDate,
-        status: formData.status as Task['status'],
-        assignedTo: formData.assignedTo,
-      };
-
-      onSave?.(updatedTask);
+        due_at: dueAtIso,
+        is_done: formData.status === 'completed',
+        assigned_to: formData.assignToSelf ? null : formData.assignedToId || null,
+      });
       onOpenChange(false);
     }
   };
@@ -126,37 +148,6 @@ export function EditReminderDialog({ task, open, onOpenChange, onSave }: EditRem
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="type">Type</Label>
-              <Select value={formData.type} onValueChange={(v) => updateForm('type', v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="follow-up">Follow-up</SelectItem>
-                  <SelectItem value="outreach">Outreach</SelectItem>
-                  <SelectItem value="reminder">General Reminder</SelectItem>
-                  <SelectItem value="event">Event Related</SelectItem>
-                  <SelectItem value="update">Data Update</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="priority">Priority</Label>
-              <Select value={formData.priority} onValueChange={(v) => updateForm('priority', v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="low">Low</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
               <Label htmlFor="dueDate">Due Date *</Label>
               <Input
                 id="dueDate"
@@ -180,24 +171,42 @@ export function EditReminderDialog({ task, open, onOpenChange, onSave }: EditRem
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="assignedTo">Assigned To</Label>
-            <Select value={formData.assignedTo} onValueChange={(v) => updateForm('assignedTo', v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select assignee" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="You">Self</SelectItem>
-                <SelectItem value="HR Team">HR Team</SelectItem>
-                <SelectItem value="Admin">Admin</SelectItem>
-                <SelectItem value="HR Manager">HR Manager</SelectItem>
-                {mockUsers.map((user) => (
-                  <SelectItem key={user.id} value={user.name}>
-                    {user.name} ({user.role})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="dueTime">Time (optional)</Label>
+              <Input
+                id="dueTime"
+                type="time"
+                value={formData.dueTime}
+                onChange={(e) => updateForm('dueTime', e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Assignee</Label>
+              <Select
+                value={formData.assignToSelf ? 'self' : formData.assignedToId}
+                onValueChange={(v) => {
+                  if (v === 'self') {
+                    updateForm('assignToSelf', true);
+                    updateForm('assignedToId', '');
+                  } else {
+                    updateForm('assignToSelf', false);
+                    updateForm('assignedToId', v);
+                  }
+                }}
+                disabled={!canAssignToOthers}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Self" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="self">Self</SelectItem>
+                  {assignableUsers.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>{u.name} ({u.role})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
 

@@ -3,7 +3,10 @@ import * as React from "react";
 import type { ToastActionElement, ToastProps } from "@/components/ui/toast";
 
 const TOAST_LIMIT = 1;
-const TOAST_REMOVE_DELAY = 1000000;
+// How long after the toast is dismissed it stays mounted (for exit animations).
+const TOAST_REMOVE_DELAY = 500;
+// Auto-close duration (ms) for newly added toasts.
+const TOAST_AUTO_DISMISS_DURATION = 4000;
 
 type ToasterToast = ToastProps & {
   id: string;
@@ -51,6 +54,7 @@ interface State {
 }
 
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+const toastAutoDismissTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
 const addToRemoveQueue = (toastId: string) => {
   if (toastTimeouts.has(toastId)) {
@@ -136,13 +140,19 @@ type Toast = Omit<ToasterToast, "id">;
 
 function toast({ ...props }: Toast) {
   const id = genId();
+  const duration = (props as any)?.duration ?? TOAST_AUTO_DISMISS_DURATION;
 
   const update = (props: ToasterToast) =>
     dispatch({
       type: "UPDATE_TOAST",
       toast: { ...props, id },
     });
-  const dismiss = () => dispatch({ type: "DISMISS_TOAST", toastId: id });
+  const dismiss = () => {
+    const t = toastAutoDismissTimeouts.get(id);
+    if (t) clearTimeout(t);
+    toastAutoDismissTimeouts.delete(id);
+    dispatch({ type: "DISMISS_TOAST", toastId: id });
+  };
 
   dispatch({
     type: "ADD_TOAST",
@@ -150,11 +160,19 @@ function toast({ ...props }: Toast) {
       ...props,
       id,
       open: true,
+      duration,
       onOpenChange: (open) => {
         if (!open) dismiss();
       },
     },
   });
+
+  // Radix auto-dismiss can be unreliable when `open` is controlled.
+  // Ensure we always dismiss after `duration`.
+  const timeout = setTimeout(() => {
+    dismiss();
+  }, duration);
+  toastAutoDismissTimeouts.set(id, timeout);
 
   return {
     id: id,

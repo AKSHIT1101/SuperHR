@@ -6,6 +6,7 @@ from core.database import DatabaseManager
 from core.dependencies import get_db, get_current_user
 from core.llm import build_contact_query_plan, validate_prompt_context
 from core.query_engine import execute_query_plan
+from core.embeddings import embed_text
 
 router = APIRouter(prefix="/segments", tags=["Segments"])
 
@@ -24,6 +25,12 @@ class SegmentCreateRequest(BaseModel):
     prompt: Optional[str] = None
     query_plan: Optional[dict] = None
     contact_ids: List[int]  # user-approved final list
+
+
+class SegmentUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    contact_ids: Optional[List[int]] = None
 
 
 # ------------------------------------------------------------------ #
@@ -91,6 +98,11 @@ def create_segment(
         created_by=current_user["user_id"],
         contact_ids=body.contact_ids,
     )
+    # Create/update the vector for semantic segment-name resolution.
+    text = f"{segment.get('name') or ''}\n{segment.get('description') or ''}\n{segment.get('prompt') or ''}".strip()
+    vec = embed_text(text)
+    db.upsert_segment_embedding(org_id=org_id, segment_id=segment["segment_id"], embedding=vec)
+
     return {
         "segment": segment,
         "contact_count": len(body.contact_ids),
@@ -128,3 +140,27 @@ def delete_segment(
     if not deleted:
         raise HTTPException(status_code=404, detail="Segment not found")
     return {"message": "Segment deleted"}
+
+
+@router.patch("/{segment_id}", summary="Update a segment (name/description/members)")
+def update_segment(
+    segment_id: int,
+    body: SegmentUpdateRequest,
+    db: DatabaseManager = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    updated = db.update_segment(
+        segment_id=segment_id,
+        org_id=current_user["org_id"],
+        name=body.name,
+        description=body.description,
+        contact_ids=body.contact_ids,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    text = f"{updated.get('name') or ''}\n{updated.get('description') or ''}\n{updated.get('prompt') or ''}".strip()
+    vec = embed_text(text)
+    db.upsert_segment_embedding(org_id=current_user["org_id"], segment_id=updated["segment_id"], embedding=vec)
+
+    return updated

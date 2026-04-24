@@ -10,6 +10,7 @@ from core.config import get_settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+_UNSET = object()
 
 settings = get_settings()
 
@@ -1845,7 +1846,6 @@ class DatabaseManager:
             LEFT JOIN users u ON r.assigned_to = u.user_id
             WHERE r.org_id = %s
               AND (r.created_by = %s OR r.assigned_to = %s)
-              AND r.is_done = FALSE
             ORDER BY r.due_at ASC NULLS LAST, r.created_at DESC
             """,
             (org_id, user_id, user_id), fetch="all",
@@ -1856,18 +1856,23 @@ class DatabaseManager:
         reminder_id: int,
         org_id: int,
         user_id: int,
-        title: str = None,
-        description: str = None,
-        due_at=None,
-        is_done: bool = None,
-        assigned_to: int = None,
+        title: str = _UNSET,
+        description: str = _UNSET,
+        due_at=_UNSET,
+        is_done: bool = _UNSET,
+        assigned_to: int = _UNSET,
     ) -> Optional[Dict]:
         updates = {}
-        if title       is not None: updates["title"]       = title
-        if description is not None: updates["description"] = description
-        if due_at      is not None: updates["due_at"]      = due_at
-        if is_done     is not None: updates["is_done"]     = is_done
-        if assigned_to is not None: updates["assigned_to"] = assigned_to
+        if title is not _UNSET:
+            updates["title"] = title
+        if description is not _UNSET:
+            updates["description"] = description
+        if due_at is not _UNSET:
+            updates["due_at"] = due_at
+        if is_done is not _UNSET:
+            updates["is_done"] = is_done
+        if assigned_to is not _UNSET:
+            updates["assigned_to"] = assigned_to
 
         if not updates:
             return self.execute_query(

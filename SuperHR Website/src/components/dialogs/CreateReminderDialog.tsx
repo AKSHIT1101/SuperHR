@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bell, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,12 @@ interface CreateReminderDialogProps {
   onOpenChange: (open: boolean) => void;
   assignableUsers?: AssignableUser[];
   canAssignToOthers?: boolean;
+  initialData?: {
+    title?: string;
+    description?: string;
+    dueDate?: string;
+    dueTime?: string;
+  } | null;
   onSave?: (reminder: {
     title: string;
     description?: string;
@@ -31,6 +37,7 @@ export function CreateReminderDialog({
   onSave,
   assignableUsers = [],
   canAssignToOthers = false,
+  initialData = null,
 }: CreateReminderDialogProps) {
   const { toast } = useToast();
   const [formData, setFormData] = useState({
@@ -41,6 +48,18 @@ export function CreateReminderDialog({
     assignToSelf: true,
     assignedTo: '',
   });
+
+  useEffect(() => {
+    if (!open) return;
+    if (!initialData) return;
+    setFormData((prev) => ({
+      ...prev,
+      title: initialData.title ?? prev.title,
+      description: initialData.description ?? prev.description,
+      dueDate: initialData.dueDate ?? prev.dueDate,
+      dueTime: initialData.dueTime ?? prev.dueTime,
+    }));
+  }, [open, initialData]);
 
   const updateForm = (field: string, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));

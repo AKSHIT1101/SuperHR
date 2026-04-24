@@ -33,6 +33,8 @@ export default function Reminders() {
   const [completingTask, setCompletingTask] = useState<Task | null>(null);
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [createPrefill, setCreatePrefill] = useState<{ title?: string; description?: string; dueDate?: string; dueTime?: string } | null>(null);
   const [assignableUsers, setAssignableUsers] = useState<{ id: string; name: string; role: 'admin' | 'manager' | 'user'; email?: string }[]>([]);
 
   const filteredTasks = tasks.filter((task) => {
@@ -164,6 +166,35 @@ export default function Reminders() {
       .catch((e: any) => toast({ title: 'Failed to create reminder', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
   };
 
+  const openCreateWithAi = async (prompt: string) => {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      toast({ title: 'Add a prompt first', description: 'Describe what reminder AI should create.' });
+      return;
+    }
+
+    setAiGenerating(true);
+    try {
+      const res = await apiPost<any>('/reminders/preview', { prompt: trimmed });
+      if (!res?.valid) {
+        throw new Error(res?.error || 'Prompt did not match reminders context.');
+      }
+      const draft = res?.draft ?? {};
+      setCreatePrefill({
+        title: draft?.title ? String(draft.title) : trimmed,
+        description: draft?.description ? String(draft.description) : '',
+        dueDate: draft?.due_date ? String(draft.due_date) : '',
+        dueTime: draft?.due_time ? String(draft.due_time) : '',
+      });
+      setShowCreateDialog(true);
+      toast({ title: 'AI draft ready', description: 'Review and save the generated reminder.' });
+    } catch (e: any) {
+      toast({ title: 'Failed to generate reminder', description: e?.message ?? 'Unknown error', variant: 'destructive' });
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
   const taskCounts = useMemo(() => ({
     all: tasks.length,
     pending: tasks.filter((t) => t.status === 'pending').length,
@@ -185,21 +216,21 @@ export default function Reminders() {
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <Input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="e.g., Remind my managers to follow up with no-show attendees tomorrow" className="h-12 flex-1" />
-              <Button className="h-12 gap-2" onClick={() => setShowCreateDialog(true)}><Sparkles className="h-4 w-4" />Create with AI</Button>
+              <Button className="h-12 gap-2" onClick={() => openCreateWithAi(aiPrompt)} disabled={aiGenerating || !aiPrompt.trim()}><Sparkles className="h-4 w-4" />{aiGenerating ? 'Generating…' : 'Create with AI'}</Button>
             </div>
           </div>
           <div className="rounded-2xl border bg-muted/40 p-4">
             <p className="text-sm font-medium">Suggested prompts</p>
             <div className="mt-3 flex flex-wrap gap-2">
               {aiReminderSuggestions.map((suggestion) => (
-                <Button key={suggestion} variant="outline" size="sm" className="h-auto whitespace-normal text-left" onClick={() => { setAiPrompt(suggestion); setShowCreateDialog(true); }}>{suggestion}</Button>
+                <Button key={suggestion} variant="outline" size="sm" className="h-auto whitespace-normal text-left" onClick={() => { setAiPrompt(suggestion); openCreateWithAi(suggestion); }}>{suggestion}</Button>
               ))}
             </div>
           </div>
         </div>
       </section>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold">Reminder queue</h2><p className="text-sm text-muted-foreground">AI suggestions should feel like the primary workflow.</p></div><Button variant="outline" onClick={() => setShowCreateDialog(true)}><Plus className="mr-2 h-4 w-4" />Open editor</Button></div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold">Reminder queue</h2><p className="text-sm text-muted-foreground">AI suggestions should feel like the primary workflow.</p></div><Button variant="outline" onClick={() => { setCreatePrefill(null); setShowCreateDialog(true); }}><Plus className="mr-2 h-4 w-4" />Open editor</Button></div>
       <Card className="nudge-card border-l-4 border-l-primary"><CardContent className="flex items-start gap-3 pt-4"><div className="rounded-lg bg-primary/10 p-2"><Sparkles className="h-5 w-5 text-primary" /></div><div className="flex-1"><h4 className="font-medium">AI-Generated Tasks</h4><p className="mt-1 text-sm text-muted-foreground">Based on engagement patterns, we've suggested {taskCounts.ai} tasks that need attention.</p></div></CardContent></Card>
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="flex-wrap"><TabsTrigger value="all" className="gap-2">All <Badge variant="secondary">{taskCounts.all}</Badge></TabsTrigger><TabsTrigger value="self" className="gap-2"><User className="h-3 w-3" />Self <Badge variant="secondary">{taskCounts.self}</Badge></TabsTrigger><TabsTrigger value="ai" className="gap-2"><Sparkles className="h-3 w-3" />AI <Badge variant="secondary">{taskCounts.ai}</Badge></TabsTrigger><TabsTrigger value="pending" className="gap-2">Pending <Badge variant="secondary">{taskCounts.pending}</Badge></TabsTrigger><TabsTrigger value="in-progress" className="gap-2">In Progress <Badge variant="secondary">{taskCounts['in-progress']}</Badge></TabsTrigger><TabsTrigger value="completed" className="gap-2">Completed <Badge variant="secondary">{taskCounts.completed}</Badge></TabsTrigger></TabsList>
@@ -228,10 +259,14 @@ export default function Reminders() {
       </Tabs>
       <CreateReminderDialog
         open={showCreateDialog}
-        onOpenChange={setShowCreateDialog}
+        onOpenChange={(open) => {
+          setShowCreateDialog(open);
+          if (!open) setCreatePrefill(null);
+        }}
         onSave={handleSaveReminder}
         assignableUsers={assignableUsers}
         canAssignToOthers={isAdmin}
+        initialData={createPrefill}
       />
       <EditReminderDialog
         task={editingTask}

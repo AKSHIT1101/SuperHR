@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # NOTE: Groq client only (no OpenAI usage). Groq exposes an OpenAI-compatible API surface.
-client = Groq(api_key=settings.GROQ_API_KEY, base_url=settings.GROQ_BASE_URL)
+client = Groq(api_key=settings.GROQ_API_KEY)
 
 
 def _chat(system: str, user: str, temperature: float = 0.1) -> str:
@@ -651,3 +651,83 @@ Rules:
 def compose_event_draft(prompt: str) -> Dict:
     raw = _chat(EVENT_DRAFT_SYSTEM, prompt, temperature=0.3)
     return _parse_json(raw)
+
+
+# ------------------------------------------------------------------ #
+#  Reminder Draft Generator (reminders preview)                     #
+# ------------------------------------------------------------------ #
+
+REMINDER_DRAFT_SYSTEM = """
+You are a CRM reminder assistant.
+
+Given a natural language request, produce a reminder draft.
+
+Return ONLY valid JSON, no explanation, no markdown fences.
+
+Output schema:
+{
+  "title": "string",
+  "description": "string",
+  "due_date": "YYYY-MM-DD",
+  "due_time": "HH:MM" | null,
+  "priority": "high|medium|low"
+}
+
+Rules:
+- Keep title concise and action-oriented.
+- Keep description short and practical.
+- Always provide due_date (infer the next reasonable occurrence when missing).
+- Set due_time to null if not clearly implied.
+- Default priority to "medium" unless urgency is explicit.
+"""
+
+
+def _local_compose_reminder_draft(prompt: str) -> Dict:
+    import re
+    from datetime import datetime, timedelta
+
+    cleaned = (prompt or "").strip()
+    lowered = cleaned.lower()
+    today = datetime.now()
+
+    due_date = today.date()
+    if "tomorrow" in lowered:
+        due_date = (today + timedelta(days=1)).date()
+    elif "today" in lowered:
+        due_date = today.date()
+    elif "friday" in lowered:
+        # Next Friday (or today if already Friday and no explicit "next")
+        days_ahead = (4 - today.weekday()) % 7
+        due_date = (today + timedelta(days=days_ahead)).date()
+
+    time_match = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", lowered)
+    due_time = f"{int(time_match.group(1)):02d}:{time_match.group(2)}" if time_match else None
+
+    priority = "medium"
+    if any(w in lowered for w in ["urgent", "asap", "immediately", "critical"]):
+        priority = "high"
+    elif any(w in lowered for w in ["later", "whenever", "low priority"]):
+        priority = "low"
+
+    title = cleaned
+    if len(title) > 80:
+        title = title[:77].rstrip() + "..."
+
+    return {
+        "title": title or "Reminder",
+        "description": cleaned or "Follow up on this reminder.",
+        "due_date": due_date.isoformat(),
+        "due_time": due_time,
+        "priority": priority,
+    }
+
+
+def compose_reminder_draft(prompt: str) -> Dict:
+    try:
+        raw = _chat(REMINDER_DRAFT_SYSTEM, prompt, temperature=0.2)
+        parsed = _parse_json(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("Reminder draft must be a JSON object")
+        return parsed
+    except Exception:
+        return _local_compose_reminder_draft(prompt)

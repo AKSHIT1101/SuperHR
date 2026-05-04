@@ -15,6 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Event, EventAttendee, AudienceSegment, MessageTemplate } from '@/types/contact';
 import { mockContacts } from '@/data/mockData';
 import { cn } from '@/lib/utils';
+import { LockedOutboundSenderField } from '@/components/messaging/LockedOutboundSenderField';
 
 interface EventDetailDialogProps {
   event: Event | null;
@@ -41,12 +42,6 @@ const whatsappTemplates: MessageTemplate[] = [
   { id: '5', name: 'Event Reminder WhatsApp', type: 'whatsapp', content: 'Hi {{name}}! Reminder about {{event_name}}...', createdAt: '', createdBy: '', updatedAt: '' },
 ];
 
-const senderOptions = [
-  { id: '1', type: 'email', name: 'CRM Team', address: 'crm@company.com' },
-  { id: '2', type: 'email', name: 'Events Team', address: 'events@company.com' },
-  { id: '3', type: 'whatsapp', name: 'Main WhatsApp', address: '+1 555 123 4567' },
-];
-
 const locationOptions = ['Bangalore', 'Mumbai', 'Kochi', 'Delhi', 'Chennai', 'Hyderabad'];
 const departmentOptions = ['Technology', 'Analytics', 'Operations', 'R&D', 'Biotech'];
 const typeOptions = [
@@ -66,7 +61,6 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
   const [attendeeTab, setAttendeeTab] = useState<'not-sent' | 'sent'>('not-sent');
   const [sendType, setSendType] = useState<'email' | 'whatsapp'>('email');
   const [selectedTemplate, setSelectedTemplate] = useState('');
-  const [selectedSender, setSelectedSender] = useState('');
   const [sendToNew, setSendToNew] = useState(false);
   const [addMode, setAddMode] = useState<'segments' | 'individuals'>('segments');
   const [selectedSegments, setSelectedSegments] = useState<string[]>([]);
@@ -80,7 +74,6 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
   const [sendFollowUp, setSendFollowUp] = useState(false);
   const [followUpType, setFollowUpType] = useState<'email' | 'whatsapp'>('email');
   const [followUpTemplate, setFollowUpTemplate] = useState('');
-  const [followUpSender, setFollowUpSender] = useState('');
   const [segmentSearch, setSegmentSearch] = useState('');
 
   useEffect(() => {
@@ -143,9 +136,7 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
   const confirmationRate = displayEvent && displayEvent.invitedCount > 0 ? Math.round((displayEvent.confirmedCount / displayEvent.invitedCount) * 100) : 0;
   const attendanceRate = displayEvent && displayEvent.status === 'completed' && displayEvent.confirmedCount > 0 ? Math.round((displayEvent.attendedCount / displayEvent.confirmedCount) * 100) : 0;
   const emailOpenRate = displayEvent && displayEvent.emailsSent > 0 ? Math.round((displayEvent.emailsOpened / displayEvent.emailsSent) * 100) : 0;
-  const filteredSenders = senderOptions.filter((s) => s.type === sendType);
   const filteredTemplates = sendType === 'email' ? emailTemplates : whatsappTemplates;
-  const followUpSenders = senderOptions.filter((s) => s.type === followUpType);
   const followUpTemplates = followUpType === 'email' ? emailTemplates : whatsappTemplates;
   const attendedCount = attendedIds.length;
   const notAttendedCount = attendees.filter((a) => a.inviteSent).length - attendedIds.length;
@@ -172,14 +163,14 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
   const handleSendInvites = (onlyNew: boolean = false) => { setSendToNew(onlyNew); setShowSendInviteDialog(true); };
 
   const handleConfirmSendInvites = () => {
-    if (!selectedTemplate || !selectedSender) { toast({ title: 'Error', description: 'Please select a template and sender', variant: 'destructive' }); return; }
+    if (!selectedTemplate) { toast({ title: 'Error', description: 'Please select a template', variant: 'destructive' }); return; }
     if (editedEvent) {
       const targetAttendees = sendToNew ? notSentAttendees : attendees.filter((a) => !a.inviteSent);
       const updatedAttendees = (editedEvent.attendees || []).map((a) => !a.inviteSent ? { ...a, inviteSent: true, inviteSentDate: new Date().toISOString() } : a);
       const updated: Event = { ...editedEvent, attendees: updatedAttendees, emailsSent: sendType === 'email' ? (editedEvent.emailsSent || 0) + targetAttendees.length : editedEvent.emailsSent, whatsappSent: sendType === 'whatsapp' ? (editedEvent.whatsappSent || 0) + targetAttendees.length : editedEvent.whatsappSent };
       setEditedEvent(updated); onSave?.(updated);
     }
-    setShowSendInviteDialog(false); setSelectedTemplate(''); setSelectedSender('');
+    setShowSendInviteDialog(false); setSelectedTemplate('');
     toast({ title: 'Invites Sent', description: `${sendType === 'email' ? 'Email' : 'WhatsApp'} invitations sent successfully` });
   };
 
@@ -191,7 +182,7 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
     const updatedAttendees = editedEvent.attendees?.map((a) => ({ ...a, attended: attendedIds.includes(a.contactId) })) || [];
     const updated: Event = { ...editedEvent, status: 'completed' as const, attendees: updatedAttendees, attendedCount: attendedIds.length };
     setEditedEvent(updated); onSave?.(updated);
-    if (sendFollowUp && followUpTemplate && followUpSender) {
+    if (sendFollowUp && followUpTemplate) {
       toast({ title: 'AI follow-up queued', description: `Prepared one message for ${attendedIds.length} attendees and another for ${notAttendedCount} no-shows.` });
     }
     setShowCompleteEventDialog(false); toast({ title: 'Event Completed' });
@@ -275,7 +266,7 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
       </Dialog>
 
       <Dialog open={showSendInviteDialog} onOpenChange={setShowSendInviteDialog}>
-        <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Send Invitations</DialogTitle><DialogDescription>Send to {notSentAttendees.length} pending attendees</DialogDescription></DialogHeader><div className="mt-4 space-y-4"><Tabs value={sendType} onValueChange={(v) => setSendType(v as 'email' | 'whatsapp')}><TabsList className="w-full"><TabsTrigger value="email" className="flex-1"><Mail className="mr-2 h-4 w-4" />Email</TabsTrigger><TabsTrigger value="whatsapp" className="flex-1"><MessageCircle className="mr-2 h-4 w-4" />WhatsApp</TabsTrigger></TabsList></Tabs><div className="space-y-2"><Label>Select Template</Label><Select value={selectedTemplate} onValueChange={setSelectedTemplate}><SelectTrigger><SelectValue placeholder="Choose a template" /></SelectTrigger><SelectContent>{filteredTemplates.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>Send From</Label><Select value={selectedSender} onValueChange={setSelectedSender}><SelectTrigger><SelectValue placeholder="Choose sender" /></SelectTrigger><SelectContent>{filteredSenders.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} ({s.address})</SelectItem>)}</SelectContent></Select></div><div className="flex justify-end gap-3 border-t pt-4"><Button variant="outline" onClick={() => setShowSendInviteDialog(false)}>Cancel</Button><Button onClick={handleConfirmSendInvites}><Send className="mr-2 h-4 w-4" />Send ({notSentAttendees.length})</Button></div></div></DialogContent>
+        <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Send Invitations</DialogTitle><DialogDescription>Send to {notSentAttendees.length} pending attendees</DialogDescription></DialogHeader><div className="mt-4 space-y-4"><Tabs value={sendType} onValueChange={(v) => setSendType(v as 'email' | 'whatsapp')}><TabsList className="w-full"><TabsTrigger value="email" className="flex-1"><Mail className="mr-2 h-4 w-4" />Email</TabsTrigger><TabsTrigger value="whatsapp" className="flex-1"><MessageCircle className="mr-2 h-4 w-4" />WhatsApp</TabsTrigger></TabsList></Tabs><div className="space-y-2"><Label>Select Template</Label><Select value={selectedTemplate} onValueChange={setSelectedTemplate}><SelectTrigger><SelectValue placeholder="Choose a template" /></SelectTrigger><SelectContent>{filteredTemplates.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select></div><LockedOutboundSenderField channel={sendType} /><div className="flex justify-end gap-3 border-t pt-4"><Button variant="outline" onClick={() => setShowSendInviteDialog(false)}>Cancel</Button><Button onClick={handleConfirmSendInvites}><Send className="mr-2 h-4 w-4" />Send ({notSentAttendees.length})</Button></div></div></DialogContent>
       </Dialog>
 
       <Dialog open={showAddAttendeesDialog} onOpenChange={setShowAddAttendeesDialog}>
@@ -313,7 +304,7 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
             <div className="flex min-h-0 flex-col p-5">
               <div className="mb-4 flex items-center justify-between shrink-0"><Label className="text-base font-medium">Mark Attendance</Label><div className="flex items-center gap-2"><Button variant="outline" size="sm" onClick={() => setAttendedIds(attendees.map((a) => a.contactId))}>Select All</Button><Button variant="outline" size="sm" onClick={() => setAttendedIds([])}>Deselect All</Button></div></div>
               <ScrollArea className="flex-1 rounded-xl border bg-card"><div className="space-y-2 p-3">{attendees.filter((a) => a.inviteSent).map((attendee) => (<div key={attendee.contactId} className={cn('flex items-center gap-3 rounded-xl border p-3 cursor-pointer hover:bg-muted/50', attendedIds.includes(attendee.contactId) && 'bg-success/10 border-success/20')} onClick={() => toggleAttended(attendee.contactId)}><Checkbox checked={attendedIds.includes(attendee.contactId)} /><div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10"><span className="text-xs font-medium">{attendee.name.split(' ').map((n) => n[0]).join('')}</span></div><div className="min-w-0 flex-1"><p className="text-sm font-medium">{attendee.name}</p><p className="truncate text-xs text-muted-foreground">{attendee.email}</p></div>{attendee.confirmed && <Badge variant="secondary" className="text-xs">Confirmed</Badge>}</div>))}</div></ScrollArea>
-              <div className="mt-4 rounded-2xl border bg-muted/30 p-4"><div className="mb-3 flex items-center gap-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-primary" /> AI follow-up everywhere</div><div className="flex items-center gap-3"><Checkbox id="send-followup" checked={sendFollowUp} onCheckedChange={(c) => setSendFollowUp(c === true)} /><Label htmlFor="send-followup" className="cursor-pointer">Prepare AI follow-ups for attendees and absentees</Label></div>{sendFollowUp && (<div className="mt-4 space-y-4"><Tabs value={followUpType} onValueChange={(v) => setFollowUpType(v as 'email' | 'whatsapp')}><TabsList><TabsTrigger value="email"><Mail className="mr-2 h-4 w-4" />Email</TabsTrigger><TabsTrigger value="whatsapp"><MessageCircle className="mr-2 h-4 w-4" />WhatsApp</TabsTrigger></TabsList></Tabs><div className="grid gap-4 md:grid-cols-2"><div className="rounded-xl border bg-card p-4"><p className="text-sm font-medium">Attended</p><p className="mt-2 text-sm text-muted-foreground">AI will prepare a bulk message for {attendedCount} attendees.</p></div><div className="rounded-xl border bg-card p-4"><p className="text-sm font-medium">Did not attend</p><p className="mt-2 text-sm text-muted-foreground">AI will prepare a separate bulk message for {notAttendedCount} absentees.</p></div></div><div className="space-y-2"><Label>Template</Label><Select value={followUpTemplate} onValueChange={setFollowUpTemplate}><SelectTrigger><SelectValue placeholder="Select template" /></SelectTrigger><SelectContent>{followUpTemplates.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>Send From</Label><Select value={followUpSender} onValueChange={setFollowUpSender}><SelectTrigger><SelectValue placeholder="Select sender" /></SelectTrigger><SelectContent>{followUpSenders.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} ({s.address})</SelectItem>)}</SelectContent></Select></div></div>)}</div>
+              <div className="mt-4 rounded-2xl border bg-muted/30 p-4"><div className="mb-3 flex items-center gap-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-primary" /> AI follow-up everywhere</div><div className="flex items-center gap-3"><Checkbox id="send-followup" checked={sendFollowUp} onCheckedChange={(c) => setSendFollowUp(c === true)} /><Label htmlFor="send-followup" className="cursor-pointer">Prepare AI follow-ups for attendees and absentees</Label></div>{sendFollowUp && (<div className="mt-4 space-y-4"><Tabs value={followUpType} onValueChange={(v) => setFollowUpType(v as 'email' | 'whatsapp')}><TabsList><TabsTrigger value="email"><Mail className="mr-2 h-4 w-4" />Email</TabsTrigger><TabsTrigger value="whatsapp"><MessageCircle className="mr-2 h-4 w-4" />WhatsApp</TabsTrigger></TabsList></Tabs><div className="grid gap-4 md:grid-cols-2"><div className="rounded-xl border bg-card p-4"><p className="text-sm font-medium">Attended</p><p className="mt-2 text-sm text-muted-foreground">AI will prepare a bulk message for {attendedCount} attendees.</p></div><div className="rounded-xl border bg-card p-4"><p className="text-sm font-medium">Did not attend</p><p className="mt-2 text-sm text-muted-foreground">AI will prepare a separate bulk message for {notAttendedCount} absentees.</p></div></div><div className="space-y-2"><Label>Template</Label><Select value={followUpTemplate} onValueChange={setFollowUpTemplate}><SelectTrigger><SelectValue placeholder="Select template" /></SelectTrigger><SelectContent>{followUpTemplates.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select></div><LockedOutboundSenderField channel={followUpType} /></div>)}</div>
             </div>
           </div>
           <div className="dialog-footer-bar flex justify-end gap-3"><Button variant="outline" onClick={() => setShowCompleteEventDialog(false)}>Cancel</Button><Button onClick={handleCompleteEvent}><CheckCircle className="mr-2 h-4 w-4" />Complete Event</Button></div>

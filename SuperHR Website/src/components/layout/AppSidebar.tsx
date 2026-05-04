@@ -39,7 +39,7 @@ const mainNavItems = [
 ];
 
 const managementItems = [
-  { title: 'Reminders', url: '/reminders', icon: Bell, badge: 8 },
+  { title: 'Reminders', url: '/reminders', icon: Bell },
 ];
 
 const adminItems = [
@@ -124,19 +124,6 @@ export function AppSidebar() {
                       {!collapsed && (
                         <>
                           <span className="flex-1">{item.title}</span>
-                          {item.badge && (
-                            <Badge
-                              variant="secondary"
-                              className={cn(
-                                'h-5 min-w-5 px-1.5 text-xs',
-                                isActive(item.url)
-                                  ? 'bg-primary-foreground/20 text-primary-foreground'
-                                  : 'bg-accent text-accent-foreground'
-                              )}
-                            >
-                              {item.badge}
-                            </Badge>
-                          )}
                         </>
                       )}
                     </NavLink>

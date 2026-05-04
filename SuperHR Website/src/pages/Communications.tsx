@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Send, Mail, MessageCircle, FileText, Users, Plus, Save, Trash2, X, Edit2, Sparkles, Wand2 } from 'lucide-react';
+import { LockedOutboundSenderField } from '@/components/messaging/LockedOutboundSenderField';
+import { getSystemOutbound } from '@/lib/systemOutbound';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,18 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from '@/hooks/use-toast';
 import { MessageTemplate, AudienceSegment } from '@/types/contact';
 import { SelectRecipientsDialog } from '@/components/dialogs/SelectRecipientsDialog';
-import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api';
-
-const emailSenders = [
-  { id: '1', name: 'CRM Team', address: 'crm@company.com' },
-  { id: '2', name: 'Sales Team', address: 'sales@company.com' },
-  { id: '3', name: 'Events Team', address: 'events@company.com' },
-];
-
-const whatsappSenders = [
-  { id: '1', name: 'Main WhatsApp', address: '+1 555 123 4567' },
-  { id: '2', name: 'Secondary WhatsApp', address: '+1 555 987 6543' },
-];
+import { ApiError, apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api';
 
 const aiCampaignSuggestions = [
   'Send a campaign to sales leads in Bangalore about the Q2 kickoff',
@@ -50,7 +41,6 @@ export default function Communications() {
   const [editingTemplate, setEditingTemplate] = useState<MessageTemplate | null>(null);
   const [templateForm, setTemplateForm] = useState({ name: '', subject: '', content: '' });
   const [selectedTemplate, setSelectedTemplate] = useState('');
-  const [selectedSender, setSelectedSender] = useState('');
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
   const [selectedSegments, setSelectedSegments] = useState<string[]>([]);
@@ -97,7 +87,6 @@ export default function Communications() {
   }, [location.state, contacts]);
 
   const currentTemplates = templates;
-  const currentSenders = messageType === 'email' ? emailSenders : whatsappSenders;
 
   const totalRecipients = useMemo(() => {
     const segmentCount = selectedSegments.reduce((sum, id) => sum + (segments.find((s) => s.id === id)?.memberCount || 0), 0);
@@ -350,16 +339,35 @@ export default function Communications() {
     }
   };
 
+  const mergeValidationDescription = (err: ApiError) => {
+    const raw = (err.data as any)?.detail;
+    const d = raw?.merge_validation;
+    if (!d || typeof d !== 'object') {
+      return typeof raw?.hints === 'string' ? `${err.message}\n${raw.hints}` : err.message;
+    }
+    const parts: string[] = [typeof raw?.message === 'string' ? raw.message : err.message];
+    const unknown = Array.isArray(d.unknown_tokens) ? d.unknown_tokens : [];
+    const syntax = Array.isArray(d.syntax_errors) ? d.syntax_errors : [];
+    if (syntax.length) parts.push(`Syntax: ${syntax.join('; ')}`);
+    if (unknown.length) parts.push(`Unknown fields: ${unknown.join(', ')}`);
+    const allowed = Array.isArray(d.allowed_tokens_sample) ? d.allowed_tokens_sample.slice(0, 12) : [];
+    if (allowed.length) parts.push(`Allowed examples: ${allowed.join(', ')}…`);
+    return parts.join('\n');
+  };
+
   const handleSendNow = async () => {
     if (!message) { toast({ title: 'Error', description: 'Please write a message', variant: 'destructive' }); return; }
     if (selectedSegments.length === 0 && selectedIndividuals.length === 0) { toast({ title: 'Error', description: 'Please select recipients', variant: 'destructive' }); return; }
-    if (!selectedSender) { toast({ title: 'Error', description: 'Please select a sender', variant: 'destructive' }); return; }
-
     try {
-      const sender = currentSenders.find((s) => s.id === selectedSender);
+      const sender = getSystemOutbound(messageType);
       const contact_ids = await resolveContactIds(selectedSegments, selectedIndividuals);
       const sent_at = new Date().toISOString();
-      await apiPost('/campaigns', {
+      const sendViaBrevo = messageType === 'email';
+      const merge_overrides =
+        eventOutreach?.eventAction === 'invite' || eventOutreach?.eventAction === 'cancel'
+          ? { event_name: eventOutreach.eventName }
+          : undefined;
+      const res = await apiPost<any>('/campaigns', {
         name: eventOutreach
           ? `${eventOutreach.eventName} - ${eventOutreach.eventAction}`
           : subject || 'Direct Message',
@@ -368,20 +376,25 @@ export default function Communications() {
         channel: messageType,
         subject: messageType === 'email' ? subject : null,
         content: message,
-        sender_label: sender?.name || null,
-        sender_address: sender?.address || null,
+        sender_label: sender.label,
+        sender_address: sender.address,
         sent_at,
-        status: 'completed',
         sent_count: contact_ids.length,
         open_count: 0,
         click_count: 0,
+        send_via_brevo: sendViaBrevo,
+        merge_overrides,
       });
 
       // If we were launched from an event, mark RSVP/status so "cancel" can target only previously invited people.
       if (eventOutreach) {
         if (eventOutreach.eventAction === 'invite') {
           const channel = messageType;
-          for (const cid of contact_ids) {
+          const okIds: number[] =
+            messageType === 'email' && Array.isArray(res?.brevo?.succeeded_contact_ids)
+              ? res.brevo.succeeded_contact_ids.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
+              : contact_ids;
+          for (const cid of okIds) {
             await apiPatch(`/events/${eventOutreach.eventId}/invite-sent`, {
               contact_id: cid,
               channel,
@@ -393,7 +406,13 @@ export default function Communications() {
         }
       }
 
-      toast({ title: 'Campaign tracked', description: `Saved campaign for ${contact_ids.length} recipients (no sending configured).` });
+      const brevoMeta = sendViaBrevo && res?.brevo && typeof res.brevo.sent === 'number' ? res.brevo : null;
+      toast({
+        title: brevoMeta ? 'Email sent' : 'Campaign saved',
+        description: brevoMeta
+          ? `Brevo delivered ${brevoMeta.sent} of ${contact_ids.length} contacts (missing email addresses are skipped).`
+          : `Saved campaign for ${contact_ids.length} recipients.`,
+      });
       setMessage('');
       setSubject('');
       setSelectedSegments([]);
@@ -402,7 +421,8 @@ export default function Communications() {
       setEventOutreach(null);
       await fetchCampaigns();
     } catch (e: any) {
-      toast({ title: 'Failed to save campaign', description: e?.message ?? 'Unknown error', variant: 'destructive' });
+      const desc = e instanceof ApiError && e.status === 400 ? mergeValidationDescription(e) : (e?.message ?? 'Unknown error');
+      toast({ title: 'Failed to save or send campaign', description: desc, variant: 'destructive' });
     }
   };
 
@@ -425,7 +445,11 @@ export default function Communications() {
         toast({ title: 'Success' });
         return fetchTemplates(messageType);
       })
-      .catch((e: any) => toast({ title: 'Failed to save template', description: e?.message ?? 'Unknown error', variant: 'destructive' }));
+      .catch((e: any) => {
+        const desc =
+          e instanceof ApiError && e.status === 400 ? mergeValidationDescription(e) : (e?.message ?? 'Unknown error');
+        toast({ title: 'Failed to save template', description: desc, variant: 'destructive' });
+      });
   };
 
   const handleEditTemplate = (template: MessageTemplate) => { setEditingTemplate(template); setTemplateForm({ name: template.name, subject: template.subject || '', content: template.content }); setShowCreateTemplateDialog(true); };
@@ -651,7 +675,7 @@ export default function Communications() {
               <Card>
                 <CardHeader><CardTitle className="text-lg">Compose {messageType === 'email' ? 'Email' : 'WhatsApp Message'}</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
-                  <div><Label className="text-sm font-medium mb-2 block">Send From *</Label><Select value={selectedSender} onValueChange={setSelectedSender}><SelectTrigger><SelectValue placeholder={`Select ${messageType === 'email' ? 'email' : 'phone'}`} /></SelectTrigger><SelectContent>{currentSenders.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} ({s.address})</SelectItem>)}</SelectContent></Select></div>
+                  <LockedOutboundSenderField channel={messageType} />
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <Label className="text-sm font-medium">

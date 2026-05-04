@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Save, Mail, Shield, Users, Plus, Trash2, X, GripVertical, Edit2 } from 'lucide-react';
+import { Save, Mail, Shield, Users, Plus, Trash2, X, GripVertical, Edit2, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,7 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { SenderConfig, CustomField, defaultCustomFields } from '@/types/contact';
+import { CustomField, defaultCustomFields } from '@/types/contact';
+import { EMAIL_OUTBOUND, WHATSAPP_OUTBOUND } from '@/lib/systemOutbound';
 import { apiPost } from '@/lib/api';
 import { useNavigate } from 'react-router-dom';
 
@@ -20,14 +21,7 @@ export default function Settings() {
   const { user, isAdmin, refreshFromToken, logout } = useAuth();
   const navigate = useNavigate();
 
-  const [senders, setSenders] = useState<SenderConfig[]>([
-    { id: '1', type: 'email', name: 'CRM Team', address: 'crm@company.com', isDefault: true },
-    { id: '2', type: 'email', name: 'Sales Team', address: 'sales@company.com', isDefault: false },
-    { id: '3', type: 'whatsapp', name: 'Main WhatsApp', address: '+1 555 123 4567', isDefault: true },
-  ]);
-
   const [allowedEmails, setAllowedEmails] = useState<string[]>(['arun.k@company.com', 'meera.n@company.com', 'admin@company.com']);
-  const [newSender, setNewSender] = useState({ name: '', address: '', type: 'email' as 'email' | 'whatsapp' });
   const [newEmail, setNewEmail] = useState('');
 
   // Custom fields state
@@ -37,14 +31,6 @@ export default function Settings() {
   const [fieldForm, setFieldForm] = useState({ name: '', key: '', type: 'text' as CustomField['type'], required: false, section: 'Custom', options: '', placeholder: '', description: '' });
 
   const handleSave = () => toast({ title: 'Settings Saved', description: 'Your preferences have been updated' });
-
-  const handleAddSender = () => {
-    if (!newSender.name || !newSender.address) { toast({ title: 'Error', description: 'Please fill in all fields', variant: 'destructive' }); return; }
-    setSenders((prev) => [...prev, { id: crypto.randomUUID(), ...newSender, isDefault: prev.filter((s) => s.type === newSender.type).length === 0 }]);
-    setNewSender({ name: '', address: '', type: 'email' }); toast({ title: 'Sender added' });
-  };
-  const handleRemoveSender = (id: string) => { setSenders((prev) => prev.filter((s) => s.id !== id)); };
-  const handleSetDefaultSender = (id: string, type: 'email' | 'whatsapp') => { setSenders((prev) => prev.map((s) => ({ ...s, isDefault: s.type === type ? s.id === id : s.isDefault }))); };
 
   const handleAddAllowedEmail = () => {
     if (!newEmail || !newEmail.includes('@')) { toast({ title: 'Error', description: 'Please enter a valid email', variant: 'destructive' }); return; }
@@ -78,8 +64,6 @@ export default function Settings() {
 
   const handleDeleteField = (id: string) => { setCustomFields((prev) => prev.filter((f) => f.id !== id)); toast({ title: 'Field removed' }); };
 
-  const emailSenders = senders.filter((s) => s.type === 'email');
-  const whatsappSenders = senders.filter((s) => s.type === 'whatsapp');
   const sections = [...new Set(customFields.map((f) => f.section))];
 
   return (
@@ -132,20 +116,50 @@ export default function Settings() {
         {isAdmin && (
           <TabsContent value="email">
             <div className="space-y-6">
-              <Card><CardHeader><CardTitle>Email Senders</CardTitle><CardDescription>Configure email addresses for communications</CardDescription></CardHeader>
-                <CardContent className="space-y-4">
-                  {emailSenders.map((sender) => (
-                    <div key={sender.id} className="flex items-center justify-between p-3 rounded-lg border"><div className="flex items-center gap-3"><Mail className="h-4 w-4 text-muted-foreground" /><div><p className="font-medium">{sender.name}</p><p className="text-sm text-muted-foreground">{sender.address}</p></div></div><div className="flex items-center gap-2">{sender.isDefault ? <Badge>Default</Badge> : <Button variant="outline" size="sm" onClick={() => handleSetDefaultSender(sender.id, 'email')}>Set Default</Button>}<Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleRemoveSender(sender.id)}><Trash2 className="h-4 w-4" /></Button></div></div>
-                  ))}
-                  <div className="flex gap-2 pt-4 border-t"><Input placeholder="Sender Name" value={newSender.type === 'email' ? newSender.name : ''} onChange={(e) => setNewSender({ ...newSender, name: e.target.value, type: 'email' })} className="flex-1" /><Input placeholder="Email Address" type="email" value={newSender.type === 'email' ? newSender.address : ''} onChange={(e) => setNewSender({ ...newSender, address: e.target.value, type: 'email' })} className="flex-1" /><Button onClick={() => { setNewSender({ ...newSender, type: 'email' }); handleAddSender(); }}><Plus className="h-4 w-4 mr-2" />Add</Button></div>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <span>Outbound email</span>
+                    <Lock className="h-4 w-4 text-muted-foreground" aria-hidden />
+                  </CardTitle>
+                  <CardDescription>
+                    All outbound email is sent from Super HR&apos;s verified address. Custom sender aliases are disabled for now.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center gap-3 rounded-lg border border-dashed bg-muted/40 px-3 py-3">
+                    <Lock className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <Mail className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{EMAIL_OUTBOUND.label}</p>
+                      <p className="text-sm text-muted-foreground truncate">{EMAIL_OUTBOUND.address}</p>
+                    </div>
+                    <Badge variant="secondary">Managed</Badge>
+                  </div>
                 </CardContent>
               </Card>
-              <Card><CardHeader><CardTitle>WhatsApp Numbers</CardTitle><CardDescription>Configure WhatsApp numbers for messaging</CardDescription></CardHeader>
-                <CardContent className="space-y-4">
-                  {whatsappSenders.map((sender) => (
-                    <div key={sender.id} className="flex items-center justify-between p-3 rounded-lg border"><div className="flex items-center gap-3"><div className="h-8 w-8 rounded-full bg-success/10 flex items-center justify-center"><span className="text-success text-sm">WA</span></div><div><p className="font-medium">{sender.name}</p><p className="text-sm text-muted-foreground">{sender.address}</p></div></div><div className="flex items-center gap-2">{sender.isDefault ? <Badge>Default</Badge> : <Button variant="outline" size="sm" onClick={() => handleSetDefaultSender(sender.id, 'whatsapp')}>Set Default</Button>}<Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleRemoveSender(sender.id)}><Trash2 className="h-4 w-4" /></Button></div></div>
-                  ))}
-                  <div className="flex gap-2 pt-4 border-t"><Input placeholder="Display Name" value={newSender.type === 'whatsapp' ? newSender.name : ''} onChange={(e) => setNewSender({ ...newSender, name: e.target.value, type: 'whatsapp' })} className="flex-1" /><Input placeholder="Phone Number" value={newSender.type === 'whatsapp' ? newSender.address : ''} onChange={(e) => setNewSender({ ...newSender, address: e.target.value, type: 'whatsapp' })} className="flex-1" /><Button onClick={() => { setNewSender({ ...newSender, type: 'whatsapp' }); handleAddSender(); }}><Plus className="h-4 w-4 mr-2" />Add</Button></div>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <span>WhatsApp messaging</span>
+                    <Lock className="h-4 w-4 text-muted-foreground" aria-hidden />
+                  </CardTitle>
+                  <CardDescription>
+                    WhatsApp messages are sent through Super HR&apos;s registered Business number only.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center gap-3 rounded-lg border border-dashed bg-muted/40 px-3 py-3">
+                    <Lock className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-success/10">
+                      <span className="text-sm font-medium text-success">WA</span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{WHATSAPP_OUTBOUND.label}</p>
+                      <p className="text-sm text-muted-foreground truncate">{WHATSAPP_OUTBOUND.address}</p>
+                    </div>
+                    <Badge variant="secondary">Managed</Badge>
+                  </div>
                 </CardContent>
               </Card>
             </div>

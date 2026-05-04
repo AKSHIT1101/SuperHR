@@ -246,11 +246,13 @@ export default function AudienceSegments() {
       const contacts = res?.contacts ?? [];
       const ids = contacts.map((c: any) => String(c.contact_id)).filter((id: string) => id);
 
-      // Prefill name/description and open the editor with preselected contacts.
-      const meta = prefillSegmentMetaFromPrompt(prompt);
+      // Name + description from AI (backend); heuristic fallback if missing.
+      const suggestedName = typeof res?.suggested_name === 'string' ? res.suggested_name.trim() : '';
+      const suggestedDesc = typeof res?.suggested_description === 'string' ? res.suggested_description.trim() : '';
+      const fallback = prefillSegmentMetaFromPrompt(prompt);
       setEditingSegment(null);
-      setSegmentName(meta.name);
-      setSegmentDescription(meta.description);
+      setSegmentName(suggestedName || fallback.name);
+      setSegmentDescription(suggestedDesc || fallback.description);
       setSelectedMemberIds(ids);
       setAiQueryPlan(res?.query_plan ?? null);
 

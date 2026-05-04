@@ -4,7 +4,7 @@ from typing import Optional, List
 
 from core.database import DatabaseManager
 from core.dependencies import get_db, get_current_user
-from core.llm import build_contact_query_plan, validate_prompt_context
+from core.llm import build_contact_query_plan, validate_prompt_context, suggest_segment_metadata
 from core.query_engine import execute_query_plan
 from core.embeddings import embed_text
 
@@ -67,6 +67,8 @@ def preview_segment(
     # Execute plan
     contacts = execute_query_plan(db, org_id, query_plan)
 
+    meta = suggest_segment_metadata(body.prompt, len(contacts), query_plan)
+
     return {
         "valid": True,
         "prompt": body.prompt,
@@ -74,6 +76,8 @@ def preview_segment(
         "preselected_count": len(contacts),
         "contacts": contacts,
         "warnings": query_plan.get("warnings", []),
+        "suggested_name": meta.get("segment_name"),
+        "suggested_description": meta.get("segment_description"),
     }
 
 

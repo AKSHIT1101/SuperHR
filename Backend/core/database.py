@@ -1460,6 +1460,13 @@ class DatabaseManager:
             fetch="one",
         )
 
+    def get_template(self, template_id: int, org_id: int) -> Optional[Dict]:
+        return self.execute_query(
+            "SELECT * FROM message_templates WHERE template_id = %s AND org_id = %s",
+            (template_id, org_id),
+            fetch="one",
+        )
+
     def update_template(
         self,
         template_id: int,
@@ -1701,9 +1708,9 @@ class DatabaseManager:
             """
             UPDATE event_contacts ec
             SET rsvp_status = %s
-            FROM events e
-            JOIN contacts c ON c.contact_id = ec.contact_id
+            FROM events e, contacts c
             WHERE ec.event_id = e.event_id
+              AND ec.contact_id = c.contact_id
               AND ec.event_id = %s
               AND ec.contact_id = %s
               AND e.org_id = %s
@@ -1733,9 +1740,9 @@ class DatabaseManager:
             f"""
             UPDATE event_contacts ec
             SET {col} = %s
-            FROM events e
-            JOIN contacts c ON c.contact_id = ec.contact_id
+            FROM events e, contacts c
             WHERE ec.event_id = e.event_id
+              AND ec.contact_id = c.contact_id
               AND ec.event_id = %s
               AND ec.contact_id = %s
               AND e.org_id = %s

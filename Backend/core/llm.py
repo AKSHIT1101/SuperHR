@@ -171,6 +171,120 @@ def _local_build_contact_query_plan(prompt: str, schema: List[Dict], groq_error:
 
 
 # ------------------------------------------------------------------ #
+#  2b. Segment naming (preview → saved segment title + description)  #
+# ------------------------------------------------------------------ #
+
+SEGMENT_META_SYSTEM = """
+You name CRM audience segments for HR/marketing users.
+Return JSON only:
+{
+  "segment_name": "<short list label, max ~55 chars, Title Case, no trailing period>",
+  "segment_description": "<two sentences max: clearly state who belongs in this segment in everyday language>"
+}
+
+Rules:
+- segment_name: concrete and scannable (e.g. "Sales Employees in Bangalore", "High-touch Marketing Leads").
+- segment_description: explain the intent of the segment (criteria / role / geography / engagement)—not generic filler.
+- Do not mention JSON, filters, embeddings, thresholds, or "query plan".
+- Do not include the exact contact count in the name (optional brief mention once in description is okay).
+"""
+
+
+def _summarize_query_plan_for_segment_meta(query_plan: Optional[Dict]) -> str:
+    if not query_plan:
+        return ""
+    lines: list[str] = []
+    for sf in query_plan.get("semantic_filters") or []:
+        fn = sf.get("field_name") or "field"
+        q = sf.get("query") or ""
+        lines.append(f"Similar to “{q}” on {fn}")
+    for ef in query_plan.get("exact_filters") or []:
+        lines.append(f"{ef.get('field_name')} {ef.get('op')} {ef.get('value')}")
+    warns = query_plan.get("warnings") or []
+    if warns:
+        lines.append("Planner notes: " + "; ".join(str(w) for w in warns[:3]))
+    return "\n".join(lines) if lines else ""
+
+
+def _local_suggest_segment_metadata(
+    prompt: str,
+    query_plan: Dict,
+    preselected_count: int,
+    groq_error: Optional[str] = None,
+) -> Dict[str, str]:
+    summary = _summarize_query_plan_for_segment_meta(query_plan).strip()
+
+    lowered = prompt.lower()
+    keyword_phrase = ""
+    if " in " in lowered:
+        keyword_phrase = lowered.split(" in ")[-1]
+    elif " for " in lowered:
+        keyword_phrase = lowered.split(" for ")[-1]
+    else:
+        keyword_phrase = lowered.replace("segment", "").replace("create", "").replace("find", "").strip()
+
+    import re
+
+    keyword_tokens = re.findall(r"[a-z0-9]+", keyword_phrase)
+    keyword = " ".join(keyword_tokens[:5]).strip() or lowered[:48].strip()
+
+    if keyword:
+        title = keyword.title()
+    elif prompt.strip():
+        title = prompt.strip()[:42] + ("…" if len(prompt.strip()) > 42 else "")
+    else:
+        title = "Custom audience"
+
+    name = f"{title} Segment" if title.strip().lower() not in ("segment", "") else "AI Segment"
+
+    desc_parts = [f"This segment includes contacts matching your request: «{prompt.strip()[:280]}»."] if prompt.strip() else []
+    if summary:
+        desc_parts.append(f"In practice, selection follows: {summary[:400]}.")
+    if groq_error:
+        desc_parts.append("(Name generated offline while AI naming was unavailable.)")
+    elif preselected_count >= 0:
+        desc_parts.append(f"Currently {preselected_count} contact(s) match after review.")
+
+    description = " ".join(desc_parts) if desc_parts else "Contacts selected from your CRM using the current filters."
+
+    if len(description) > 600:
+        description = description[:597] + "…"
+
+    return {"segment_name": name[:120], "segment_description": description}
+
+
+def suggest_segment_metadata(
+    prompt: str,
+    preselected_count: int,
+    query_plan: Optional[Dict] = None,
+) -> Dict[str, str]:
+    """
+    Produces human-facing segment title + description aligned with the prompt and planner output.
+    Falls back locally if Groq fails.
+    """
+    qp = dict(query_plan or {})
+    qp_summary = _summarize_query_plan_for_segment_meta(qp)
+    user_blob = (
+        f"Original user prompt:\n{prompt.strip()}\n\n"
+        f"Approximate number of contacts in preview: {preselected_count}\n\n"
+        f"How contacts were filtered (reference only):\n{qp_summary or '(No structured breakdown)'}"
+    )
+
+    try:
+        raw = _chat(SEGMENT_META_SYSTEM, user_blob, temperature=0.35)
+        data = _parse_json(raw)
+        name = (data.get("segment_name") or "").strip()
+        desc = (data.get("segment_description") or "").strip()
+        if name and desc and len(name) <= 200:
+            return {"segment_name": name, "segment_description": desc}
+    except Exception as e:
+        logger.warning("suggest_segment_metadata: Groq failed, using local labels: %s", e)
+        return _local_suggest_segment_metadata(prompt, qp, preselected_count, groq_error=str(e))
+
+    return _local_suggest_segment_metadata(prompt, qp, preselected_count, None)
+
+
+# ------------------------------------------------------------------ #
 #  3. CSV / Excel Column Mapper                                       #
 # ------------------------------------------------------------------ #
 
@@ -486,29 +600,31 @@ def parse_schema_edit(prompt: str, current_schema: List[Dict]) -> Dict:
 COMPOSER_SYSTEM = """
 You are a CRM outreach copywriter.
 
-The user provides a natural language request describing:
-- who to message (may reference segments by name)
-- what to message about (may reference an event by name)
+You receive JSON with keys including:
+- channel, event_name, event_action, segment_names, user_prompt
+- merge_placeholder_rules: authoritative text listing which merge placeholders are allowed.
 
-Your job: generate message content in the requested channel.
+merge_placeholder_rules lists tokens you MUST ONLY use inside subject and body, for example {{name}},
+{{email}}, {{first_name}}, {{job_title}}, and sometimes {{event_name}}. Do not invent new tokens.
 
-Return ONLY a JSON object with this schema:
+Your job: generate message content for the requested channel using ONLY placeholders from merge_placeholder_rules.
+
+Return ONLY JSON:
 {
   "valid": true,
   "campaign_name": "<string>",
-  "subject": "<string or null>", 
+  "subject": "<string or null>",
   "content": "<string>"
 }
 
 Rules:
-- If channel is "email", provide a helpful subject line and include greeting + body.
-- If channel is "whatsapp", set subject to null and generate a short WhatsApp-friendly message.
-- Use personalization placeholders:
-  - Include "{{name}}" at least once in the message.
-  - Optionally use "{{email}}" if relevant.
-- If event_action is "cancel", mention cancellation and apologize briefly.
-- If event_action is "invite", write an invitation.
-- Keep it concise and professional.
+- If channel is "email": include helpful subject plus body text.
+- If channel is "whatsapp": subject MUST be null; short conversational message.
+- Use double curly braces only: {{field_name}}, never single braces.
+- Include {{name}} in the greeting at least once (unless merge_placeholder_rules makes name unavailable).
+- If event_action is "cancel"|"invite" and merge_placeholder_rules includes {{event_name}}, use {{event_name}} for the title;
+  otherwise name the event in plain prose using event_name JSON without inventing placeholders.
+- If merge_placeholder_rules includes org custom merge keys, you may personalize with those sparingly where natural.
 """
 
 
@@ -590,25 +706,33 @@ def compose_campaign_content(
     event_name: str | None = None,
     event_action: str | None = None,  # invite | cancel | None
     segment_names: list[str] | None = None,
+    merge_fields_documentation: str | None = None,
 ) -> Dict:
     """
-    Generates subject+content using Groq.
+    Generates subject+content using Groq, constrained to documented merge placeholders.
     """
     segment_names = segment_names or []
-    user_msg = json.dumps(
-        {
-            "channel": channel,
-            "event_name": event_name,
-            "event_action": event_action,
-            "segment_names": segment_names,
-            "user_prompt": prompt,
-        },
-        ensure_ascii=False,
+    doc = merge_fields_documentation or (
+        "Built-in placeholders: {{name}}, {{first_name}}, {{last_name}}, {{email}}, {{phone}}."
     )
-    raw = _chat(COMPOSER_SYSTEM, user_msg, temperature=0.4)
-    parsed = _parse_json(raw)
+    payload = {
+        "channel": channel,
+        "event_name": event_name,
+        "event_action": event_action,
+        "segment_names": segment_names,
+        "user_prompt": prompt,
+        "merge_placeholder_rules": doc,
+    }
+    user_msg = json.dumps(payload, ensure_ascii=False)
+    try:
+        raw = _chat(COMPOSER_SYSTEM, user_msg, temperature=0.4)
+        parsed = _parse_json(raw)
+    except Exception as e:
+        logger.warning("compose_campaign_content: Groq failed, using fallback: %s", e)
+        return _local_compose_campaign_content(
+            prompt, channel, event_name, event_action, segment_names, groq_error=str(e),
+        )
 
-    # Minimal normalization:
     if "campaign_name" not in parsed or parsed.get("campaign_name") in (None, ""):
         parsed["campaign_name"] = "Campaign"
     if channel != "email":

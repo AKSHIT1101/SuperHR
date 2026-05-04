@@ -44,6 +44,10 @@ function extractErrorMessage(data: unknown, fallback: string): string {
   if (typeof data === 'object') {
     const anyData = data as any;
     if (typeof anyData.detail === 'string') return anyData.detail;
+    if (typeof anyData.detail === 'object' && anyData.detail !== null) {
+      const d = anyData.detail as Record<string, unknown>;
+      if (typeof d.message === 'string') return d.message;
+    }
     if (Array.isArray(anyData.detail) && anyData.detail.length > 0) {
       const first = anyData.detail[0];
       if (first && typeof first.msg === 'string') return first.msg;

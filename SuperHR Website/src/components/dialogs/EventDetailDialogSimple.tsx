@@ -149,7 +149,7 @@ export function EventDetailDialogSimple(props: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] max-w-[1400px] h-[92vh] p-0">
+      <DialogContent className="flex h-[92vh] w-[96vw] max-w-[1400px] flex-col gap-0 overflow-hidden p-0">
         <div className="dialog-shell">
           <DialogHeader className="dialog-header-tight">
             <div className="flex items-start justify-between gap-4">
@@ -166,67 +166,71 @@ export function EventDetailDialogSimple(props: {
             </div>
           </DialogHeader>
 
-          <div className="dialog-body-scroll grid min-h-0 lg:grid-cols-[420px_minmax(0,1fr)]">
-            <aside className="border-b bg-muted/20 p-6 lg:border-b-0 lg:border-r">
+          <div className="dialog-body-scroll grid min-h-0 h-full gap-0 grid-cols-1 lg:grid-cols-[420px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+            <aside className="flex min-h-0 max-h-[min(420px,42svh)] flex-col overflow-hidden border-b bg-muted/20 lg:max-h-none lg:h-full lg:border-b-0 lg:border-r">
               {loading ? (
-                <div className="text-sm text-muted-foreground">Loading…</div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Event name</Label>
-                    <Input disabled={!isEditing} value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Description</Label>
-                    <Textarea disabled={!isEditing} value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={4} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Location</Label>
-                    <Input disabled={!isEditing} value={draft.location} onChange={(e) => setDraft((d) => ({ ...d, location: e.target.value }))} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <Label>Date</Label>
-                      <Input disabled={!isEditing} type="date" value={draft.date} onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Time</Label>
-                      <Input disabled={!isEditing} type="time" value={draft.time} onChange={(e) => setDraft((d) => ({ ...d, time: e.target.value }))} />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Status</Label>
-                    <Select disabled={!isEditing} value={draft.status} onValueChange={(v) => setDraft((d) => ({ ...d, status: v as any }))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="draft">Draft</SelectItem>
-                        <SelectItem value="scheduled">Scheduled</SelectItem>
-                        <SelectItem value="completed">Completed</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="rounded-2xl border bg-card p-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium">Invitees</p>
-                      <Badge variant="secondary">{invitees.length}</Badge>
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">Edit invitees to replace the list.</p>
-                    <Button
-                      className="mt-3 w-full"
-                      variant="outline"
-                      disabled={!isEditing}
-                      onClick={() => setShowInviteeSelector(true)}
-                    >
-                      Edit invitees
-                    </Button>
-                  </div>
+                <div className="flex-1 overflow-y-auto p-6">
+                  <div className="text-sm text-muted-foreground">Loading…</div>
                 </div>
+              ) : (
+                <ScrollArea className="min-h-0 flex-1 basis-0">
+                  <div className="space-y-4 p-6">
+                    <div className="space-y-2">
+                      <Label>Event name</Label>
+                      <Input disabled={!isEditing} value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Description</Label>
+                      <Textarea disabled={!isEditing} value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={4} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Location</Label>
+                      <Input disabled={!isEditing} value={draft.location} onChange={(e) => setDraft((d) => ({ ...d, location: e.target.value }))} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label>Date</Label>
+                        <Input disabled={!isEditing} type="date" value={draft.date} onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Time</Label>
+                        <Input disabled={!isEditing} type="time" value={draft.time} onChange={(e) => setDraft((d) => ({ ...d, time: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Status</Label>
+                      <Select disabled={!isEditing} value={draft.status} onValueChange={(v) => setDraft((d) => ({ ...d, status: v as any }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="draft">Draft</SelectItem>
+                          <SelectItem value="scheduled">Scheduled</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                          <SelectItem value="cancelled">Cancelled</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="rounded-2xl border bg-card p-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium">Invitees</p>
+                        <Badge variant="secondary">{invitees.length}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">Edit invitees to replace the list.</p>
+                      <Button
+                        className="mt-3 w-full"
+                        variant="outline"
+                        disabled={!isEditing}
+                        onClick={() => setShowInviteeSelector(true)}
+                      >
+                        Edit invitees
+                      </Button>
+                    </div>
+                  </div>
+                </ScrollArea>
               )}
             </aside>
 
-            <div className="flex min-h-0 flex-col p-6">
+            <div className="flex h-full min-h-0 flex-col overflow-hidden p-6">
               {showInviteeSelector && isEditing ? (
                 <PersonSelector
                   selectedSegments={selectedSegments}
@@ -248,7 +252,7 @@ export function EventDetailDialogSimple(props: {
                   className="flex-1 min-h-0"
                 />
               ) : (
-                <ScrollArea className="flex-1 rounded-xl border bg-card">
+                <ScrollArea className="min-h-0 flex-1 rounded-xl border bg-card">
                   <div className="space-y-2 p-3">
                     {invitees.length === 0 ? (
                       <div className="py-10 text-center text-muted-foreground">No invitees yet.</div>

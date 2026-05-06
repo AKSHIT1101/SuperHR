@@ -218,7 +218,12 @@ async def approve_import(
             # Save custom attributes
             custom_attrs = {
                 k: v for k, v in mapped_row.items()
-                if k not in CORE_FIELDS and k in attr_def_map and v
+                if (
+                    k not in CORE_FIELDS
+                    and k in attr_def_map
+                    and v is not None
+                    and str(v).strip() != ""
+                )
             }
             for field_name, value in custom_attrs.items():
                 attr_def = attr_def_map[field_name]

@@ -270,16 +270,19 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
       </Dialog>
 
       <Dialog open={showAddAttendeesDialog} onOpenChange={setShowAddAttendeesDialog}>
-        <DialogContent className="w-[96vw] max-w-[1450px] h-[92vh] flex flex-col p-0">
+        <DialogContent className="h-[92vh] w-[96vw] max-w-[1450px] gap-0 overflow-hidden p-0 flex flex-col">
+          <div className="dialog-shell">
           <DialogHeader className="dialog-header-tight"><DialogTitle>Add Attendees</DialogTitle><DialogDescription>Use the wide layout to see filters and many people at once.</DialogDescription></DialogHeader>
-          <div className="dialog-body-scroll grid min-h-0 lg:grid-cols-[300px_minmax(0,1fr)]">
-            <aside className="border-b bg-muted/30 p-5 lg:border-b-0 lg:border-r">
-              <div className="space-y-4">
-                <div className="rounded-2xl border bg-card p-4"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Wand2 className="h-4 w-4 text-primary" /> AI-first flow</div><p className="text-sm text-muted-foreground">This dialog is for review after AI suggests attendees elsewhere.</p></div>
-                <div className="rounded-2xl border bg-card p-4"><div className="flex items-center justify-between"><p className="text-sm font-medium">Selected</p><Badge variant="secondary">{selectedSegments.length + selectedIndividuals.length}</Badge></div><p className="mt-2 text-sm text-muted-foreground">{selectedSegments.length} segments and {selectedIndividuals.length} individuals chosen.</p></div>
-              </div>
+          <div className="dialog-body-scroll grid min-h-0 h-full gap-0 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[300px_minmax(0,1fr)]">
+            <aside className="flex max-h-[min(360px,40svh)] min-h-0 flex-col overflow-hidden border-b bg-muted/30 lg:max-h-none lg:h-full lg:border-b-0 lg:border-r">
+              <ScrollArea className="min-h-0 flex-1 basis-0">
+                <div className="space-y-4 p-5">
+                  <div className="rounded-2xl border bg-card p-4"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Wand2 className="h-4 w-4 text-primary" /> AI-first flow</div><p className="text-sm text-muted-foreground">This dialog is for review after AI suggests attendees elsewhere.</p></div>
+                  <div className="rounded-2xl border bg-card p-4"><div className="flex items-center justify-between"><p className="text-sm font-medium">Selected</p><Badge variant="secondary">{selectedSegments.length + selectedIndividuals.length}</Badge></div><p className="mt-2 text-sm text-muted-foreground">{selectedSegments.length} segments and {selectedIndividuals.length} individuals chosen.</p></div>
+                </div>
+              </ScrollArea>
             </aside>
-            <div className="flex min-h-0 flex-col p-5">
+            <div className="flex h-full min-h-0 flex-col overflow-hidden p-5">
               <Tabs value={addMode} onValueChange={(v) => setAddMode(v as any)} className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <TabsList className="mb-4 shrink-0"><TabsTrigger value="segments">Segments</TabsTrigger><TabsTrigger value="individuals">Individuals</TabsTrigger></TabsList>
                 <TabsContent value="segments" className="mt-0 flex min-h-0 flex-1 flex-col"><div className="mb-4 shrink-0"><div className="relative"><Input placeholder="Search segments..." value={segmentSearch} onChange={(e) => setSegmentSearch(e.target.value)} className="pl-9" /><Users className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /></div></div><ScrollArea className="flex-1 rounded-xl border bg-card"><div className="space-y-2 p-3">{filteredSegments.map((segment) => (<div key={segment.id} className={cn('flex items-center justify-between rounded-xl border p-4 cursor-pointer hover:bg-muted/50', selectedSegments.includes(segment.id) && 'bg-primary/10 border-primary/20')} onClick={() => toggleSegment(segment.id)}><div className="flex items-center gap-3"><Checkbox checked={selectedSegments.includes(segment.id)} /><div><p className="font-medium">{segment.name}</p><p className="text-sm text-muted-foreground">{segment.memberCount} members</p></div></div><Badge variant="secondary">{segment.memberCount}</Badge></div>))}</div></ScrollArea></TabsContent>
@@ -288,26 +291,31 @@ export function EventDetailDialog({ event, open, onOpenChange, onSave, onArchive
             </div>
           </div>
           <div className="dialog-footer-bar flex justify-end gap-3"><Button variant="outline" onClick={() => { setSelectedSegments([]); setSelectedIndividuals([]); setShowAddAttendeesDialog(false); }}>Cancel</Button><Button onClick={handleAddAttendees} disabled={selectedSegments.length === 0 && selectedIndividuals.length === 0}>Add Attendees</Button></div>
+          </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={showCompleteEventDialog} onOpenChange={setShowCompleteEventDialog}>
-        <DialogContent className="w-[96vw] max-w-[1450px] h-[92vh] flex flex-col p-0">
+        <DialogContent className="h-[92vh] w-[96vw] max-w-[1450px] gap-0 overflow-hidden p-0 flex flex-col">
+          <div className="dialog-shell">
           <DialogHeader className="dialog-header-tight"><DialogTitle>Complete Event</DialogTitle><DialogDescription>Upload attendance if you have it, mark attendees, then trigger AI follow-ups for attendees and no-shows.</DialogDescription></DialogHeader>
-          <div className="dialog-body-scroll grid min-h-0 lg:grid-cols-[300px_minmax(0,1fr)]">
-            <aside className="border-b bg-muted/30 p-5 lg:border-b-0 lg:border-r">
-              <div className="space-y-4">
-                <div className="rounded-2xl border bg-card p-4"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Upload className="h-4 w-4 text-primary" /> Attendance upload</div><Label htmlFor="attendance-upload" className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground"><Upload className="h-4 w-4" />{attendanceFileName || 'Upload CSV or sheet'}<Input id="attendance-upload" type="file" className="hidden" onChange={(e) => setAttendanceFileName(e.target.files?.[0]?.name || '')} /></Label><p className="mt-2 text-xs text-muted-foreground">This is a UI placeholder for attendance import in the AI-first flow.</p></div>
-                <div className="rounded-2xl border bg-card p-4"><div className="flex items-center justify-between"><p className="text-sm font-medium">Attendance summary</p><Badge variant="secondary">{attendedCount}</Badge></div><p className="mt-2 text-sm text-muted-foreground">{attendedCount} attended, {notAttendedCount} did not attend.</p></div>
-              </div>
+          <div className="dialog-body-scroll grid min-h-0 h-full gap-0 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[300px_minmax(0,1fr)]">
+            <aside className="flex max-h-[min(360px,40svh)] min-h-0 flex-col overflow-hidden border-b bg-muted/30 lg:max-h-none lg:h-full lg:border-b-0 lg:border-r">
+              <ScrollArea className="min-h-0 flex-1 basis-0">
+                <div className="space-y-4 p-5">
+                  <div className="rounded-2xl border bg-card p-4"><div className="mb-2 flex items-center gap-2 text-sm font-medium"><Upload className="h-4 w-4 text-primary" /> Attendance upload</div><Label htmlFor="attendance-upload" className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground"><Upload className="h-4 w-4" />{attendanceFileName || 'Upload CSV or sheet'}<Input id="attendance-upload" type="file" className="hidden" onChange={(e) => setAttendanceFileName(e.target.files?.[0]?.name || '')} /></Label><p className="mt-2 text-xs text-muted-foreground">This is a UI placeholder for attendance import in the AI-first flow.</p></div>
+                  <div className="rounded-2xl border bg-card p-4"><div className="flex items-center justify-between"><p className="text-sm font-medium">Attendance summary</p><Badge variant="secondary">{attendedCount}</Badge></div><p className="mt-2 text-sm text-muted-foreground">{attendedCount} attended, {notAttendedCount} did not attend.</p></div>
+                </div>
+              </ScrollArea>
             </aside>
-            <div className="flex min-h-0 flex-col p-5">
-              <div className="mb-4 flex items-center justify-between shrink-0"><Label className="text-base font-medium">Mark Attendance</Label><div className="flex items-center gap-2"><Button variant="outline" size="sm" onClick={() => setAttendedIds(attendees.map((a) => a.contactId))}>Select All</Button><Button variant="outline" size="sm" onClick={() => setAttendedIds([])}>Deselect All</Button></div></div>
+            <div className="flex h-full min-h-0 flex-col overflow-hidden p-5">
+              <div className="mb-4 flex shrink-0 items-center justify-between"><Label className="text-base font-medium">Mark Attendance</Label><div className="flex items-center gap-2"><Button variant="outline" size="sm" onClick={() => setAttendedIds(attendees.map((a) => a.contactId))}>Select All</Button><Button variant="outline" size="sm" onClick={() => setAttendedIds([])}>Deselect All</Button></div></div>
               <ScrollArea className="flex-1 rounded-xl border bg-card"><div className="space-y-2 p-3">{attendees.filter((a) => a.inviteSent).map((attendee) => (<div key={attendee.contactId} className={cn('flex items-center gap-3 rounded-xl border p-3 cursor-pointer hover:bg-muted/50', attendedIds.includes(attendee.contactId) && 'bg-success/10 border-success/20')} onClick={() => toggleAttended(attendee.contactId)}><Checkbox checked={attendedIds.includes(attendee.contactId)} /><div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10"><span className="text-xs font-medium">{attendee.name.split(' ').map((n) => n[0]).join('')}</span></div><div className="min-w-0 flex-1"><p className="text-sm font-medium">{attendee.name}</p><p className="truncate text-xs text-muted-foreground">{attendee.email}</p></div>{attendee.confirmed && <Badge variant="secondary" className="text-xs">Confirmed</Badge>}</div>))}</div></ScrollArea>
               <div className="mt-4 rounded-2xl border bg-muted/30 p-4"><div className="mb-3 flex items-center gap-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-primary" /> AI follow-up everywhere</div><div className="flex items-center gap-3"><Checkbox id="send-followup" checked={sendFollowUp} onCheckedChange={(c) => setSendFollowUp(c === true)} /><Label htmlFor="send-followup" className="cursor-pointer">Prepare AI follow-ups for attendees and absentees</Label></div>{sendFollowUp && (<div className="mt-4 space-y-4"><Tabs value={followUpType} onValueChange={(v) => setFollowUpType(v as 'email' | 'whatsapp')}><TabsList><TabsTrigger value="email"><Mail className="mr-2 h-4 w-4" />Email</TabsTrigger><TabsTrigger value="whatsapp"><MessageCircle className="mr-2 h-4 w-4" />WhatsApp</TabsTrigger></TabsList></Tabs><div className="grid gap-4 md:grid-cols-2"><div className="rounded-xl border bg-card p-4"><p className="text-sm font-medium">Attended</p><p className="mt-2 text-sm text-muted-foreground">AI will prepare a bulk message for {attendedCount} attendees.</p></div><div className="rounded-xl border bg-card p-4"><p className="text-sm font-medium">Did not attend</p><p className="mt-2 text-sm text-muted-foreground">AI will prepare a separate bulk message for {notAttendedCount} absentees.</p></div></div><div className="space-y-2"><Label>Template</Label><Select value={followUpTemplate} onValueChange={setFollowUpTemplate}><SelectTrigger><SelectValue placeholder="Select template" /></SelectTrigger><SelectContent>{followUpTemplates.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select></div><LockedOutboundSenderField channel={followUpType} /></div>)}</div>
             </div>
           </div>
           <div className="dialog-footer-bar flex justify-end gap-3"><Button variant="outline" onClick={() => setShowCompleteEventDialog(false)}>Cancel</Button><Button onClick={handleCompleteEvent}><CheckCircle className="mr-2 h-4 w-4" />Complete Event</Button></div>
+          </div>
         </DialogContent>
       </Dialog>
     </>

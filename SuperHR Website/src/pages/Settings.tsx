@@ -70,12 +70,12 @@ export default function Settings() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4"><div><h1 className="text-2xl font-bold">Settings</h1><p className="text-muted-foreground">Manage your account and application preferences</p></div><Button onClick={handleSave}><Save className="h-4 w-4 mr-2" />Save Changes</Button></div>
 
-      <Tabs defaultValue="fields" className="space-y-6">
+      <Tabs defaultValue="security" className="space-y-6">
         <TabsList>
-          <TabsTrigger value="fields" className="gap-2"><GripVertical className="h-4 w-4" /><span className="hidden sm:inline">Custom Fields</span></TabsTrigger>
-          {isAdmin && <TabsTrigger value="email" className="gap-2"><Mail className="h-4 w-4" /><span className="hidden sm:inline">Email & WhatsApp</span></TabsTrigger>}
+          {/* <TabsTrigger value="fields" className="gap-2"><GripVertical className="h-4 w-4" /><span className="hidden sm:inline">Custom Fields</span></TabsTrigger>
+          {isAdmin && <TabsTrigger value="email" className="gap-2"><Mail className="h-4 w-4" /><span className="hidden sm:inline">Email & WhatsApp</span></TabsTrigger>} */}
           <TabsTrigger value="security" className="gap-2"><Shield className="h-4 w-4" /><span className="hidden sm:inline">Security</span></TabsTrigger>
-          {isAdmin && <TabsTrigger value="access" className="gap-2"><Users className="h-4 w-4" /><span className="hidden sm:inline">Access Control</span></TabsTrigger>}
+          {/* {isAdmin && <TabsTrigger value="access" className="gap-2"><Users className="h-4 w-4" /><span className="hidden sm:inline">Access Control</span></TabsTrigger>} */}
         </TabsList>
 
         <TabsContent value="fields">

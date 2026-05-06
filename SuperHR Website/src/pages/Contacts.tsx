@@ -11,11 +11,17 @@ import { ImportContactsDialog } from '@/components/dialogs/ImportContactsDialog'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
 
 export default function ContactsPage() {
+  const DEFAULT_PAGE_SIZE = 50;
   const { toast } = useToast();
   const { user } = useAuth();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [totalContacts, setTotalContacts] = useState(0);
+  const [pageLimit, setPageLimit] = useState(DEFAULT_PAGE_SIZE);
+  const [pageOffset, setPageOffset] = useState(0);
+  const [showingAll, setShowingAll] = useState(false);
+  const [isFilteredView, setIsFilteredView] = useState(false);
   const [filters, setFilters] = useState<{ field_name: string; op: string; value: string }[]>([]);
   const [availableFields, setAvailableFields] = useState<{ field_name: string; display_name: string; core?: boolean }[]>([]);
   const [searchText, setSearchText] = useState('');
@@ -65,13 +71,57 @@ export default function ContactsPage() {
     return Array.from(byName.values());
   }, [availableFields]);
 
-  useEffect(() => {
-    const fetchContacts = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const token = localStorage.getItem('crm_token');
-        const res = await fetch(`${API_BASE_URL}/contacts`, {
+  const mapContacts = (rawContacts: any[]): Contact[] =>
+    (rawContacts || []).map((c: any) => ({
+      id: String(c.contact_id),
+      name: `${c.first_name} ${c.last_name}`,
+      email: c.email,
+      role: 'user',
+      permissions: ['read'],
+      lastActive: c.created_at || new Date().toISOString(),
+    }));
+
+  const fetchContactsPage = async (offset: number = 0, limit: number = DEFAULT_PAGE_SIZE) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('crm_token');
+      const res = await fetch(`${API_BASE_URL}/contacts?limit=${limit}&offset=${offset}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        throw new Error('Failed to load contacts');
+      }
+      const data = await res.json();
+      const mapped = mapContacts(data.contacts || []);
+      setContacts(mapped);
+      setTotalContacts(typeof data.total === 'number' ? data.total : mapped.length);
+      setPageLimit(typeof data.limit === 'number' ? data.limit : limit);
+      setPageOffset(typeof data.offset === 'number' ? data.offset : offset);
+      setShowingAll(false);
+      setIsFilteredView(false);
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to load contacts');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAllContacts = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('crm_token');
+      const allContacts: any[] = [];
+      const limit = 500;
+      let offset = 0;
+      let total = Infinity;
+
+      while (offset < total) {
+        const res = await fetch(`${API_BASE_URL}/contacts?limit=${limit}&offset=${offset}`, {
           headers: {
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -81,22 +131,28 @@ export default function ContactsPage() {
           throw new Error('Failed to load contacts');
         }
         const data = await res.json();
-        const mapped: Contact[] = (data.contacts || []).map((c: any) => ({
-          id: String(c.contact_id),
-          name: `${c.first_name} ${c.last_name}`,
-          email: c.email,
-          role: 'user',
-          permissions: ['read'],
-          lastActive: c.created_at || new Date().toISOString(),
-        }));
-        setContacts(mapped);
-      } catch (e: any) {
-        setError(e.message ?? 'Failed to load contacts');
-      } finally {
-        setLoading(false);
+        const pageContacts = data.contacts || [];
+        allContacts.push(...pageContacts);
+        total = typeof data.total === 'number' ? data.total : allContacts.length;
+        if (!pageContacts.length) break;
+        offset += limit;
       }
-    };
 
+      const mapped = mapContacts(allContacts);
+      setContacts(mapped);
+      setTotalContacts(mapped.length);
+      setPageOffset(0);
+      setPageLimit(mapped.length || DEFAULT_PAGE_SIZE);
+      setShowingAll(true);
+      setIsFilteredView(false);
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to load contacts');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     const fetchFilters = async () => {
       try {
         const token = localStorage.getItem('crm_token');
@@ -124,8 +180,9 @@ export default function ContactsPage() {
       }
     };
 
-    fetchContacts();
+    fetchContactsPage(0, DEFAULT_PAGE_SIZE);
     fetchFilters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const applyFilters = async () => {
@@ -153,15 +210,13 @@ export default function ContactsPage() {
         throw new Error('Failed to search contacts');
       }
       const data = await res.json();
-      const mapped: Contact[] = (data.contacts || []).map((c: any) => ({
-        id: String(c.contact_id),
-        name: `${c.first_name} ${c.last_name}`,
-        email: c.email,
-        role: 'user',
-        permissions: ['read'],
-        lastActive: c.created_at || new Date().toISOString(),
-      }));
+      const mapped = mapContacts(data.contacts || []);
       setContacts(mapped);
+      setTotalContacts(mapped.length);
+      setPageOffset(0);
+      setPageLimit(mapped.length || DEFAULT_PAGE_SIZE);
+      setShowingAll(false);
+      setIsFilteredView(true);
     } catch (e: any) {
       setError(e.message ?? 'Failed to search contacts');
     } finally {
@@ -172,30 +227,13 @@ export default function ContactsPage() {
   const resetFilters = async () => {
     setFilters([]);
     setSearchText('');
-    // Reload base list
-    try {
-      const token = localStorage.getItem('crm_token');
-      const res = await fetch(`${API_BASE_URL}/contacts`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      const mapped: Contact[] = (data.contacts || []).map((c: any) => ({
-        id: String(c.contact_id),
-        name: `${c.first_name} ${c.last_name}`,
-        email: c.email,
-        role: 'user',
-        permissions: ['read'],
-        lastActive: c.created_at || new Date().toISOString(),
-      }));
-      setContacts(mapped);
-    } catch {
-      // ignore
-    }
+    await fetchContactsPage(0, DEFAULT_PAGE_SIZE);
   };
+
+  const canGoPrevious = !isFilteredView && !showingAll && pageOffset > 0;
+  const canGoNext = !isFilteredView && !showingAll && pageOffset + contacts.length < totalContacts;
+  const rangeStart = contacts.length === 0 ? 0 : pageOffset + 1;
+  const rangeEnd = contacts.length === 0 ? 0 : pageOffset + contacts.length;
 
   const fetchContactDetails = async (contactId: string) => {
     const token = localStorage.getItem('crm_token');
@@ -461,37 +499,90 @@ export default function ContactsPage() {
       )}
 
       {!loading && contacts.length > 0 && (
-        <div className="border rounded-lg divide-y">
-          <div className="grid grid-cols-4 gap-2 px-4 py-2 text-xs font-medium text-muted-foreground">
-            <span>Name</span>
-            <span>Email</span>
-            <span>Created at</span>
-            <span>Actions</span>
-          </div>
-          {contacts.map((c) => (
-            <div key={c.id} className="grid grid-cols-4 gap-2 px-4 py-2 text-sm items-center">
-              <span className="truncate">{c.name}</span>
-              <span className="truncate">{c.email}</span>
-              <span className="truncate">
-                {c.lastActive ? new Date(c.lastActive).toLocaleDateString() : '-'}
-              </span>
-              <div className="flex gap-2 justify-end">
-                <Button size="sm" variant="outline" onClick={() => handleViewContact(c.id)}>
-                  <Eye className="mr-2 h-4 w-4" />
-                  View
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-destructive"
-                  onClick={() => handleRemoveContact(c.id)}
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Remove
-                </Button>
-              </div>
+        <div className="space-y-3">
+          <div className="border rounded-lg divide-y">
+            <div className="grid grid-cols-4 gap-2 px-4 py-2 text-xs font-medium text-muted-foreground">
+              <span>Name</span>
+              <span>Email</span>
+              <span>Created at</span>
+              <span>Actions</span>
             </div>
-          ))}
+            {contacts.map((c) => (
+              <div key={c.id} className="grid grid-cols-4 gap-2 px-4 py-2 text-sm items-center">
+                <span className="truncate">{c.name}</span>
+                <span className="truncate">{c.email}</span>
+                <span className="truncate">
+                  {c.lastActive ? new Date(c.lastActive).toLocaleDateString() : '-'}
+                </span>
+                <div className="flex gap-2 justify-end">
+                  <Button size="sm" variant="outline" onClick={() => handleViewContact(c.id)}>
+                    <Eye className="mr-2 h-4 w-4" />
+                    View
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive"
+                    onClick={() => handleRemoveContact(c.id)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Remove
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
+            <p className="text-muted-foreground">
+              {isFilteredView
+                ? `Showing ${contacts.length} filtered contacts`
+                : showingAll
+                  ? `Showing all ${contacts.length} contacts`
+                  : `Showing ${rangeStart}-${rangeEnd} of ${totalContacts} contacts`}
+            </p>
+            <div className="flex items-center gap-2">
+              {!isFilteredView && !showingAll && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fetchContactsPage(Math.max(0, pageOffset - pageLimit), pageLimit)}
+                    disabled={!canGoPrevious || loading}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fetchContactsPage(pageOffset + pageLimit, pageLimit)}
+                    disabled={!canGoNext || loading}
+                  >
+                    Next
+                  </Button>
+                </>
+              )}
+              {!isFilteredView && !showingAll && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={fetchAllContacts}
+                  disabled={loading || totalContacts <= contacts.length}
+                >
+                  View all
+                </Button>
+              )}
+              {showingAll && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => fetchContactsPage(0, DEFAULT_PAGE_SIZE)}
+                  disabled={loading}
+                >
+                  Back to pages
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

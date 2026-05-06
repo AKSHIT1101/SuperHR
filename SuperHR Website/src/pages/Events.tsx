@@ -375,14 +375,23 @@ export default function Events() {
               .filter((c: any) => c?.email_invite_sent === true || c?.whatsapp_invite_sent === true)
               .map((c: any) => String(c.contact_id));
 
+      const ev = data?.event;
+      const eventWhen =
+        ev?.event_date && !Number.isNaN(new Date(ev.event_date).getTime())
+          ? new Date(ev.event_date).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' })
+          : '';
+
       navigate('/communications', {
         state: {
           mode: 'event_outreach',
           eventId: Number(event.id),
           eventAction: action,
-          eventName: event.title,
+          eventName: String(ev?.name ?? event.title),
+          eventDescription: String(ev?.description ?? '').trim(),
+          eventLocation: String(ev?.location ?? '').trim(),
+          eventWhen,
           contactIds,
-          prompt: data?.event?.prompt ?? aiPrompt,
+          prompt: (ev?.prompt ?? aiPrompt ?? '') as string,
           messageType: 'email',
         },
       });

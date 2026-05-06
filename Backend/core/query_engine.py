@@ -48,8 +48,16 @@ def execute_query_plan(
     logic            = query_plan.get("logic", "AND").upper()
     semantic_filters = query_plan.get("semantic_filters", [])
     exact_filters    = query_plan.get("exact_filters", [])
+    logger.info(
+        "query_engine.execute start org_id=%s logic=%s semantic_filters=%s exact_filters=%s",
+        org_id,
+        logic,
+        len(semantic_filters or []),
+        len(exact_filters or []),
+    )
 
     if not semantic_filters and not exact_filters:
+        logger.info("query_engine.execute early_exit org_id=%s reason=no_filters", org_id)
         return []
 
     # ------------------------------------------------------------------ #
@@ -61,6 +69,13 @@ def execute_query_plan(
         field_name  = sf["field_name"]
         query_text  = sf["query"]
         threshold   = sf.get("threshold", 0.55)
+        logger.info(
+            "query_engine.semantic_filter org_id=%s field=%s threshold=%s query=%r",
+            org_id,
+            field_name,
+            threshold,
+            query_text,
+        )
 
         query_vec = embed_text(query_text)
         results   = db.semantic_search_contacts(
@@ -71,6 +86,12 @@ def execute_query_plan(
             similarity_threshold=threshold,
         )
         ids = {r["contact_id"] for r in results}
+        logger.info(
+            "query_engine.semantic_result org_id=%s field=%s matched=%s",
+            org_id,
+            field_name,
+            len(ids),
+        )
         semantic_id_sets.append(ids)
 
     # ------------------------------------------------------------------ #
@@ -90,9 +111,20 @@ def execute_query_plan(
 
         # AND logic + any semantic filter returned nothing → entire result empty
         if logic == "AND" and not combined:
+            logger.info(
+                "query_engine.semantic_combined_empty org_id=%s logic=%s reason=and_intersection_empty",
+                org_id,
+                logic,
+            )
             return []
 
         surviving_ids = list(combined)
+        logger.info(
+            "query_engine.semantic_combined org_id=%s logic=%s surviving_ids=%s",
+            org_id,
+            logic,
+            len(surviving_ids),
+        )
 
     # ------------------------------------------------------------------ #
     #  Step 3: Exact filter pass                                          #
@@ -101,6 +133,12 @@ def execute_query_plan(
         org_id=org_id,
         contact_ids=surviving_ids,
         exact_filters=exact_filters,
+        exact_logic=logic,
+    )
+    logger.info(
+        "query_engine.exact_result org_id=%s matched_contacts=%s",
+        org_id,
+        len(contacts or []),
     )
 
     if not contacts:
@@ -147,4 +185,10 @@ def execute_query_plan(
     for c in contacts:
         c["attributes"] = attr_map.get(c["contact_id"], {})
 
+    logger.info(
+        "query_engine.execute done org_id=%s returned_contacts=%s hydrated_attributes_for=%s",
+        org_id,
+        len(contacts),
+        len(attr_map),
+    )
     return contacts

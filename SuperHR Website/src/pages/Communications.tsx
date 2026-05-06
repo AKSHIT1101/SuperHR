@@ -32,6 +32,9 @@ export default function Communications() {
     eventName: string;
     contactIds: string[];
     prompt?: string;
+    eventDescription?: string;
+    eventLocation?: string;
+    eventWhen?: string;
   }>(null);
   const [mainTab, setMainTab] = useState<'send' | 'templates'>('send');
   const [messageType, setMessageType] = useState<'email' | 'whatsapp'>('email');
@@ -61,12 +64,18 @@ export default function Communications() {
 
     // Event outreach mode (invite/cancel): recipients are already known.
     if (state.mode === 'event_outreach') {
+      setSubject('');
+      setMessage('');
+      setSelectedTemplate('');
       setEventOutreach({
         eventId: Number(state.eventId),
         eventAction: state.eventAction === 'cancel' ? 'cancel' : 'invite',
         eventName: String(state.eventName ?? 'Event'),
         contactIds: (state.contactIds ?? []).map((x: any) => String(x)),
         prompt: state.prompt ? String(state.prompt) : undefined,
+        eventDescription: state.eventDescription != null ? String(state.eventDescription) : undefined,
+        eventLocation: state.eventLocation != null ? String(state.eventLocation) : undefined,
+        eventWhen: state.eventWhen != null ? String(state.eventWhen) : undefined,
       });
       if (state.messageType) setMessageType(state.messageType);
       setSelectedSegments([]);
@@ -92,6 +101,18 @@ export default function Communications() {
     const segmentCount = selectedSegments.reduce((sum, id) => sum + (segments.find((s) => s.id === id)?.memberCount || 0), 0);
     return segmentCount + new Set(selectedIndividuals).size;
   }, [selectedSegments, selectedIndividuals, segments]);
+
+  const eventOutreachHasComposeContext = useMemo(() => {
+    if (!eventOutreach) return false;
+    return (
+      !!aiPrompt.trim() ||
+      !!(eventOutreach.prompt ?? '').trim() ||
+      !!(eventOutreach.eventDescription ?? '').trim() ||
+      !!(eventOutreach.eventLocation ?? '').trim() ||
+      !!(eventOutreach.eventWhen ?? '').trim() ||
+      !!(eventOutreach.eventName ?? '').trim()
+    );
+  }, [eventOutreach, aiPrompt]);
 
   const selectedSegmentNames = useMemo(() => selectedSegments.map((id) => segments.find((s) => s.id === id)?.name || '').filter(Boolean), [selectedSegments, segments]);
   const selectedIndividualNames = useMemo(() => selectedIndividuals.map((id) => { const c = contacts.find((a) => a.id === id); return c ? `${c.firstName} ${c.lastName}` : ''; }).filter(Boolean), [selectedIndividuals, contacts]);
@@ -146,20 +167,33 @@ export default function Communications() {
     prompt: string,
     action: 'invite' | 'cancel',
     eventName: string,
+    extras?: { description?: string; location?: string; when?: string },
   ) => {
     const keyword = extractKeywordFromPrompt(prompt);
-    const focus = keyword || eventName || 'this event';
+    const desc = (extras?.description ?? '').trim();
+    const loc = (extras?.location ?? '').trim();
+    const when = (extras?.when ?? '').trim();
+    const focus = desc || keyword || eventName || 'this event';
 
     if (messageType === 'email') {
       const subjectDraft =
         action === 'cancel' ? `Update: ${eventName} cancelled` : `You're invited: ${eventName}`;
 
+      const detailBlock =
+        action === 'invite' && (when || loc)
+          ? [when ? `When: ${when}` : '', loc ? `Where: ${loc}` : ''].filter(Boolean).join('\n') + '\n\n'
+          : '';
+
       const messageDraft =
         `Hi {{name}},\n\n` +
         (action === 'cancel'
           ? `We’re reaching out to let you know that ${eventName} has been cancelled.\n\nWe apologize for any inconvenience.\n\n`
-          : `You’re invited to ${eventName}.\n\n`) +
-        `What to expect: ${focus}.\n\n` +
+          : `You’re invited to ${eventName}.\n\n` + detailBlock) +
+        (action === 'invite' && desc
+          ? `${desc}\n\n`
+          : action === 'invite'
+            ? `What to expect: ${focus}.\n\n`
+            : '') +
         `If you have any questions, reply to this email.\n\n` +
         `Thanks,`;
 
@@ -167,10 +201,12 @@ export default function Communications() {
     }
 
     // WhatsApp / SMS style copy
+    const waDetail =
+      action === 'invite' ? [when ? `When: ${when}` : '', loc ? `Where: ${loc}` : ''].filter(Boolean).join('\n') : '';
     const messageDraft =
       action === 'cancel'
         ? `Hi {{name}}, quick update: ${eventName} is cancelled. Sorry for the inconvenience.\n\nMore details: ${focus}`
-        : `Hi {{name}}, you're invited to ${eventName}!\n\nMore details: ${focus}`;
+        : `Hi {{name}}, you're invited to ${eventName}!\n\n${waDetail ? `${waDetail}\n\n` : ''}${desc || focus}`;
 
     return { subjectDraft: '', messageDraft };
   };
@@ -197,6 +233,9 @@ export default function Communications() {
     eventName?: string;
     eventAction?: 'invite' | 'cancel';
     segmentNames?: string[];
+    eventDescription?: string;
+    eventLocation?: string;
+    eventWhen?: string;
   }) => {
     const res = await apiPost<any>('/campaigns/compose', {
       prompt: args.prompt,
@@ -204,6 +243,9 @@ export default function Communications() {
       event_name: args.eventName || null,
       event_action: args.eventAction || null,
       segment_names: args.segmentNames || [],
+      event_description: args.eventDescription?.trim() || null,
+      event_location: args.eventLocation?.trim() || null,
+      event_when: args.eventWhen?.trim() || null,
     });
 
     if (!res?.valid) {
@@ -245,8 +287,14 @@ export default function Communications() {
   const handleGenerateEventContent = async () => {
     if (!eventOutreach) return;
     const prompt = (eventOutreach.prompt ?? aiPrompt).trim();
-    if (!prompt) {
-      toast({ title: 'Validation Error', description: 'Please enter a description', variant: 'destructive' });
+    const hasEventContext =
+      !!prompt ||
+      !!(eventOutreach.eventDescription ?? '').trim() ||
+      !!(eventOutreach.eventLocation ?? '').trim() ||
+      !!(eventOutreach.eventWhen ?? '').trim() ||
+      !!(eventOutreach.eventName ?? '').trim();
+    if (!hasEventContext) {
+      toast({ title: 'Validation Error', description: 'No event details to compose from', variant: 'destructive' });
       return;
     }
 
@@ -256,6 +304,9 @@ export default function Communications() {
         channel: messageType,
         eventName: eventOutreach.eventName,
         eventAction: eventOutreach.eventAction,
+        eventDescription: eventOutreach.eventDescription,
+        eventLocation: eventOutreach.eventLocation,
+        eventWhen: eventOutreach.eventWhen,
       });
 
       setSubject(messageType === 'email' ? res.subject || '' : '');
@@ -270,7 +321,13 @@ export default function Communications() {
   useEffect(() => {
     if (!eventOutreach) return;
     const prompt = (eventOutreach.prompt ?? aiPrompt).trim();
-    if (!prompt) return;
+    const hasEventContext =
+      !!prompt ||
+      !!(eventOutreach.eventDescription ?? '').trim() ||
+      !!(eventOutreach.eventLocation ?? '').trim() ||
+      !!(eventOutreach.eventWhen ?? '').trim() ||
+      !!(eventOutreach.eventName ?? '').trim();
+    if (!hasEventContext) return;
     if (subject || message) return; // don’t overwrite user edits
 
     (async () => {
@@ -280,11 +337,26 @@ export default function Communications() {
           channel: messageType,
           eventName: eventOutreach.eventName,
           eventAction: eventOutreach.eventAction,
+          eventDescription: eventOutreach.eventDescription,
+          eventLocation: eventOutreach.eventLocation,
+          eventWhen: eventOutreach.eventWhen,
         });
         setSubject(messageType === 'email' ? res.subject || '' : '');
         setMessage(res.content || '');
       } catch (e: any) {
         toast({ title: 'AI generation failed', description: e?.message ?? 'Unknown error', variant: 'destructive' });
+        const { subjectDraft, messageDraft } = prefillEventOutreachDraftFromPrompt(
+          prompt || eventOutreach.eventName,
+          eventOutreach.eventAction,
+          eventOutreach.eventName,
+          {
+            description: eventOutreach.eventDescription,
+            location: eventOutreach.eventLocation,
+            when: eventOutreach.eventWhen,
+          },
+        );
+        if (messageType === 'email') setSubject(subjectDraft);
+        setMessage(messageDraft);
       }
     })();
   }, [eventOutreach, aiPrompt, messageType]); // messageType affects copy for email vs WhatsApp
@@ -577,7 +649,7 @@ export default function Communications() {
               </h1>
               <p className="mt-2 text-muted-foreground">
                 {eventOutreach
-                  ? 'Recipients are preselected. Describe the message you want, and generate subject/body.'
+                  ? 'Recipients are preselected. We draft from your event details; add optional tone or notes here and regenerate anytime.'
                   : 'Describe who to message (and what for). We’ll preselect recipients and draft the subject/message so you can edit.'}
               </p>
             </div>
@@ -588,14 +660,16 @@ export default function Communications() {
                 onChange={(e) => setAiPrompt(e.target.value)}
                 placeholder={
                   eventOutreach
-                    ? `e.g., friendly cancellation note for ${eventOutreach.eventName}`
+                    ? eventOutreach.eventAction === 'cancel'
+                      ? `e.g., friendly cancellation note for ${eventOutreach.eventName}`
+                      : `Optional tone or extra notes (invite is built from title, date, location, description)`
                     : 'e.g., email sales leads in Bangalore about the Q2 kickoff'
                 }
                 className="h-12 flex-1"
               />
 
               {eventOutreach ? (
-                <Button className="h-12 gap-2" onClick={handleGenerateEventContent} disabled={!aiPrompt.trim()}>
+                <Button className="h-12 gap-2" onClick={handleGenerateEventContent} disabled={!eventOutreachHasComposeContext}>
                   <Sparkles className="h-4 w-4" />
                   Generate {messageType === 'email' ? 'Email' : 'WhatsApp'} content
                 </Button>

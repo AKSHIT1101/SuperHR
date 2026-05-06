@@ -7,7 +7,6 @@ POST /schema/fields          — manually add a single custom field
 GET  /schema/fields          — list all custom fields for the org
 DELETE /schema/fields/{id}   — remove a custom field
 POST /schema/edit            — edit schema via natural language (add/remove/update)
-POST /schema/complete-setup  — mark org schema setup as done
 """
 
 from typing import List, Optional
@@ -46,61 +45,6 @@ class BulkFieldRequest(BaseModel):
     fields: List[FieldDefinition]
 
 
-class CompleteSetupRequest(BaseModel):
-    prompt: Optional[str] = None
-
-
-# ------------------------------------------------------------------ #
-#  Helper: apply a single {action, fields} block                       #
-# ------------------------------------------------------------------ #
-
-def _apply_action_block(action: str, fields: list, org_id: int, db: DatabaseManager) -> list:
-    """
-    Applies one add/remove/update block.
-    Returns list of result dicts.
-    """
-    results = []
-
-    if action == "add":
-        for f in fields:
-            attr = db.create_attribute_def(
-                org_id=org_id,
-                field_name=f["field_name"],
-                display_name=f["display_name"],
-                field_type=f.get("field_type", "text"),
-                needs_embedding=f.get("needs_embedding", False),
-                is_required=f.get("is_required", False),
-            )
-            results.append(attr)
-
-    elif action == "remove":
-        for f in fields:
-            existing = db.get_attribute_def_by_name(org_id, f["field_name"])
-            if existing:
-                db.execute_query(
-                    "DELETE FROM contact_attribute_defs WHERE attr_def_id = %s AND org_id = %s",
-                    (existing["attr_def_id"], org_id),
-                    fetch="none",
-                )
-                results.append({"removed": f["field_name"]})
-            else:
-                results.append({"skipped_not_found": f["field_name"]})
-
-    elif action == "update":
-        for f in fields:
-            attr = db.create_attribute_def(
-                org_id=org_id,
-                field_name=f["field_name"],
-                display_name=f["display_name"],
-                field_type=f.get("field_type", "text"),
-                needs_embedding=f.get("needs_embedding", False),
-                is_required=f.get("is_required", False),
-            )
-            results.append(attr)
-
-    return results
-
-
 # ------------------------------------------------------------------ #
 #  Endpoints                                                           #
 # ------------------------------------------------------------------ #
@@ -111,9 +55,16 @@ async def build_schema(
     db:    DatabaseManager = Depends(get_db),
     admin = Depends(require_admin),
 ):
+    """
+    Admin describes their org in natural language.
+    LLM returns a suggested list of custom field definitions.
+    Nothing is saved yet — review and call POST /schema/fields/bulk to persist.
+    """
     fields = build_contact_schema(body.prompt)
+
     if not isinstance(fields, list):
         raise HTTPException(status_code=500, detail="LLM returned an unexpected format")
+
     return {
         "suggested_fields": fields,
         "message": "Review these fields, then POST the approved list to /schema/fields/bulk.",
@@ -127,40 +78,55 @@ def edit_schema(
     admin = Depends(require_admin),
 ):
     """
-    Supports compound edits: the LLM can return multiple action blocks
-    (e.g. remove one field AND add another in a single request).
-
-    Response shape is backwards-compatible:
-      - "action"   → first action (legacy)
-      - "changes"  → all results (legacy)
-      - "actions"  → full list of action blocks (new)
+    LLM interprets the edit request (add / remove / update fields) against the
+    current schema and applies the changes immediately.
     """
     org_id         = admin["org_id"]
     current_schema = db.get_attribute_defs(org_id)
     edit           = parse_schema_edit(body.prompt, current_schema)
 
-    all_results = []
-    actions_list = edit.get("actions") or []
+    action  = edit.get("action")
+    results = []
 
-    # Support both new multi-action format and legacy single-action format
-    if not actions_list and edit.get("action"):
-        actions_list = [{"action": edit["action"], "fields": edit.get("fields", [])}]
+    if action == "add":
+        for f in edit.get("fields", []):
+            attr = db.create_attribute_def(
+                org_id=org_id,
+                field_name=f["field_name"],
+                display_name=f["display_name"],
+                field_type=f.get("field_type", "text"),
+                needs_embedding=f.get("needs_embedding", False),
+                is_required=f.get("is_required", False),
+            )
+            results.append(attr)
 
-    for block in actions_list:
-        action = block.get("action")
-        fields = block.get("fields", [])
-        if not action:
-            continue
-        block_results = _apply_action_block(action, fields, org_id, db)
-        all_results.extend(block_results)
+    elif action == "remove":
+        for f in edit.get("fields", []):
+            existing = db.get_attribute_def_by_name(org_id, f["field_name"])
+            if existing:
+                db.execute_query(
+                    "DELETE FROM contact_attribute_defs WHERE attr_def_id = %s AND org_id = %s",
+                    (existing["attr_def_id"], org_id),
+                    fetch="none",
+                )
+                results.append({"removed": f["field_name"]})
+
+    elif action == "update":
+        for f in edit.get("fields", []):
+            attr = db.create_attribute_def(
+                org_id=org_id,
+                field_name=f["field_name"],
+                display_name=f["display_name"],
+                field_type=f.get("field_type", "text"),
+                needs_embedding=f.get("needs_embedding", False),
+                is_required=f.get("is_required", False),
+            )
+            results.append(attr)
 
     return {
-        # Legacy keys — unchanged for frontend compatibility
-        "action":   edit.get("action"),
-        "changes":  all_results,
+        "action":   action,
+        "changes":  results,
         "warnings": edit.get("warnings", []),
-        # New key — richer information
-        "actions":  actions_list,
     }
 
 
@@ -195,6 +161,10 @@ def save_fields_bulk(
         created.append(row)
 
     return {"created": created, "skipped_duplicates": skipped}
+
+
+class CompleteSetupRequest(BaseModel):
+    prompt: Optional[str] = None
 
 
 @router.post("/complete-setup", summary="Mark the org's schema setup as completed")

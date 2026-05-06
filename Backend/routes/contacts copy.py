@@ -6,7 +6,6 @@ from core.database import DatabaseManager
 from core.dependencies import get_db, get_current_user, require_admin
 from core.llm import build_contact_schema, parse_schema_edit, validate_prompt_context
 from core.embeddings import embed_text
-from routes.schema import _apply_action_block
 
 router = APIRouter(prefix="/contacts", tags=["Contacts"])
 
@@ -16,11 +15,11 @@ router = APIRouter(prefix="/contacts", tags=["Contacts"])
 # ------------------------------------------------------------------ #
 
 class SchemaSetupRequest(BaseModel):
-    prompt: str
+    prompt: str  # "We are a university. We track students by graduation year, degree, and CGPA"
 
 
 class SchemaEditRequest(BaseModel):
-    prompt: str
+    prompt: str  # "Add a field for LinkedIn URL"
 
 
 class ContactCreateRequest(BaseModel):
@@ -28,7 +27,7 @@ class ContactCreateRequest(BaseModel):
     last_name: str
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
-    attributes: Optional[dict] = {}
+    attributes: Optional[dict] = {}  # {field_name: value}
 
 
 class ContactUpdateRequest(BaseModel):
@@ -46,7 +45,7 @@ class PromptRequest(BaseModel):
 
 class FilterCondition(BaseModel):
     field_name: str
-    op: str = "eq"
+    op: str = "eq"   # eq|neq|gt|lt|gte|lte|contains
     value: Any
 
 
@@ -55,15 +54,16 @@ class FilterCondition(BaseModel):
 # ------------------------------------------------------------------ #
 
 def _enrich_contact(contact: dict, db: DatabaseManager) -> dict:
-    attrs    = db.get_contact_attribute_values(contact["contact_id"], contact["org_id"])
+    """Attach custom attribute values to a contact dict."""
+    attrs = db.get_contact_attribute_values(contact["contact_id"], contact["org_id"])
     enriched = dict(contact)
     enriched["attributes"] = {}
     for a in attrs:
         field_type = a["field_type"]
         value = (
-            a["value_text"]    if field_type == "text"
-            else a["value_number"]  if field_type == "number"
-            else a["value_date"]    if field_type == "date"
+            a["value_text"] if field_type == "text"
+            else a["value_number"] if field_type == "number"
+            else a["value_date"] if field_type == "date"
             else a["value_boolean"]
         )
         enriched["attributes"][a["field_name"]] = value
@@ -76,12 +76,13 @@ def _save_attributes(
     attributes: dict,
     db: DatabaseManager,
 ):
+    """Save custom attribute values and generate embeddings where needed."""
     for field_name, value in attributes.items():
         if value is None:
             continue
         attr_def = db.get_attribute_def_by_name(org_id, field_name)
         if not attr_def:
-            continue
+            continue  # silently skip unknown fields
         db.upsert_attribute_value(
             contact_id=contact_id,
             attr_def_id=attr_def["attr_def_id"],
@@ -104,6 +105,10 @@ def setup_schema(
     db: DatabaseManager = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
+    """
+    LLM interprets the prompt and returns field definitions.
+    These are saved immediately as the org's contact attribute schema.
+    """
     org_id = current_user["org_id"]
     fields = build_contact_schema(body.prompt)
 
@@ -119,6 +124,7 @@ def setup_schema(
         )
         saved.append(attr)
 
+    # Mark org setup as completed and store the original prompt
     db.mark_org_setup(org_id=org_id, completed=True, prompt=body.prompt)
 
     return {
@@ -141,29 +147,56 @@ def edit_schema(
     db: DatabaseManager = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    org_id         = current_user["org_id"]
+    """
+    LLM interprets the edit request against the current schema
+    and returns what to add/remove/update. Changes are applied immediately.
+    """
+    org_id = current_user["org_id"]
     current_schema = db.get_attribute_defs(org_id)
-    edit           = parse_schema_edit(body.prompt, current_schema)
+    edit = parse_schema_edit(body.prompt, current_schema)
 
-    all_results  = []
-    actions_list = edit.get("actions") or []
+    action = edit.get("action")
+    results = []
 
-    if not actions_list and edit.get("action"):
-        actions_list = [{"action": edit["action"], "fields": edit.get("fields", [])}]
+    if action == "add":
+        for f in edit.get("fields", []):
+            attr = db.create_attribute_def(
+                org_id=org_id,
+                field_name=f["field_name"],
+                display_name=f["display_name"],
+                field_type=f.get("field_type", "text"),
+                needs_embedding=f.get("needs_embedding", False),
+                is_required=f.get("is_required", False),
+            )
+            results.append(attr)
 
-    for block in actions_list:
-        action = block.get("action")
-        fields = block.get("fields", [])
-        if not action:
-            continue
-        block_results = _apply_action_block(action, fields, org_id, db)
-        all_results.extend(block_results)
+    elif action == "remove":
+        for f in edit.get("fields", []):
+            existing = db.get_attribute_def_by_name(org_id, f["field_name"])
+            if existing:
+                db.execute_query(
+                    "DELETE FROM contact_attribute_defs WHERE attr_def_id = %s AND org_id = %s",
+                    (existing["attr_def_id"], org_id),
+                    fetch="none",
+                )
+                results.append({"removed": f["field_name"]})
+
+    elif action == "update":
+        for f in edit.get("fields", []):
+            attr = db.create_attribute_def(
+                org_id=org_id,
+                field_name=f["field_name"],
+                display_name=f["display_name"],
+                field_type=f.get("field_type", "text"),
+                needs_embedding=f.get("needs_embedding", False),
+                is_required=f.get("is_required", False),
+            )
+            results.append(attr)
 
     return {
-        "action":   edit.get("action"),
-        "changes":  all_results,
+        "action": action,
+        "changes": results,
         "warnings": edit.get("warnings", []),
-        "actions":  actions_list,
     }
 
 
@@ -172,12 +205,12 @@ def get_filters(
     db: DatabaseManager = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id      = current_user["org_id"]
+    org_id = current_user["org_id"]
     core_fields = [
         {"field_name": "first_name", "display_name": "First Name", "field_type": "text", "core": True},
-        {"field_name": "last_name",  "display_name": "Last Name",  "field_type": "text", "core": True},
-        {"field_name": "email",      "display_name": "Email",      "field_type": "text", "core": True},
-        {"field_name": "phone",      "display_name": "Phone",      "field_type": "text", "core": True},
+        {"field_name": "last_name", "display_name": "Last Name", "field_type": "text", "core": True},
+        {"field_name": "email", "display_name": "Email", "field_type": "text", "core": True},
+        {"field_name": "phone", "display_name": "Phone", "field_type": "text", "core": True},
     ]
     custom_fields = db.get_attribute_defs(org_id)
     return {"core_fields": core_fields, "custom_fields": custom_fields}
@@ -189,11 +222,18 @@ def search_contacts(
     db: DatabaseManager = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id        = current_user["org_id"]
+    org_id = current_user["org_id"]
+    # Reuse the hybrid exact filter engine
+    from core.database import DatabaseManager as _DM  # for type hints only
+
     exact_filters = [f.dict() for f in filters]
-    contacts      = db.run_contact_filter_query(org_id=org_id, contact_ids=None, exact_filters=exact_filters)
-    enriched      = [_enrich_contact(c, db) for c in contacts]
-    return {"total": len(enriched), "contacts": enriched}
+    contacts = db.run_contact_filter_query(org_id=org_id, contact_ids=None, exact_filters=exact_filters)
+    # Hydrate attributes for each returned contact
+    enriched = [_enrich_contact(c, db) for c in contacts]
+    return {
+        "total": len(enriched),
+        "contacts": enriched,
+    }
 
 
 # ------------------------------------------------------------------ #
@@ -206,7 +246,7 @@ def create_contact(
     db: DatabaseManager = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id  = current_user["org_id"]
+    org_id = current_user["org_id"]
     contact = db.create_contact(
         org_id=org_id,
         first_name=body.first_name,
@@ -227,13 +267,13 @@ def list_contacts(
     db: DatabaseManager = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id   = current_user["org_id"]
+    org_id = current_user["org_id"]
     contacts = db.get_contacts_by_org(org_id, limit, offset)
-    total    = db.count_contacts(org_id)
+    total = db.count_contacts(org_id)
     return {
-        "total":    total,
-        "limit":    limit,
-        "offset":   offset,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
         "contacts": [_enrich_contact(c, db) for c in contacts],
     }
 
@@ -257,7 +297,7 @@ def update_contact(
     db: DatabaseManager = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id   = current_user["org_id"]
+    org_id = current_user["org_id"]
     existing = db.get_contact(contact_id, org_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Contact not found")
@@ -266,7 +306,7 @@ def update_contact(
         contact_id=contact_id,
         org_id=org_id,
         first_name=body.first_name or existing["first_name"],
-        last_name=body.last_name  or existing["last_name"],
+        last_name=body.last_name or existing["last_name"],
         email=body.email if body.email is not None else existing["email"],
         phone=body.phone if body.phone is not None else existing["phone"],
     )
@@ -288,7 +328,7 @@ def delete_contact(
 
 
 # ------------------------------------------------------------------ #
-#  AI Prompt Endpoint                                                 #
+#  AI Prompt Endpoint (context-validated)                            #
 # ------------------------------------------------------------------ #
 
 @router.post("/prompt", summary="Natural language contact operations (context-validated)")
@@ -297,16 +337,21 @@ def contact_prompt(
     db: DatabaseManager = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    """
+    Validates that the prompt belongs to the contacts context.
+    If it's a schema edit prompt → routes accordingly.
+    Otherwise returns a clear error telling user which page to use.
+    """
     validation = validate_prompt_context(body.prompt, "contacts")
     if not validation.get("is_valid"):
         return {
-            "valid":            False,
-            "error":            validation.get("error_message"),
-            "correct_context":  validation.get("correct_context"),
-            "detected_intent":  validation.get("detected_intent"),
+            "valid": False,
+            "error": validation.get("error_message"),
+            "correct_context": validation.get("correct_context"),
+            "detected_intent": validation.get("detected_intent"),
         }
     return {
-        "valid":           True,
+        "valid": True,
         "detected_intent": validation.get("detected_intent"),
-        "message":         "Prompt is valid for contacts context. Use the appropriate sub-endpoint.",
+        "message": "Prompt is valid for contacts context. Use the appropriate sub-endpoint.",
     }

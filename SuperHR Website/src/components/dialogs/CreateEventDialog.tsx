@@ -245,7 +245,7 @@ export function CreateEventDialog({
                 </ScrollArea>
               </div>
             ) : (
-              <div className="flex min-h-0 flex-1 flex-col p-6 pt-5">
+              <div className="flex h-full min-h-0 flex-col p-6 pt-5">
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
                     <h2 className="text-xl font-semibold">Select Attendees</h2>
@@ -254,7 +254,7 @@ export function CreateEventDialog({
                   <Badge variant="secondary">{estimatedSegmentMembers + selectedIndividuals.length} total</Badge>
                 </div>
 
-                <div className="min-h-0 flex-1 grid gap-4 lg:grid-cols-[1fr_320px]">
+                <div className="grid h-full min-h-0 flex-1 gap-4 lg:grid-cols-[1fr_320px]">
                   <div className="min-h-0">
                     <PersonSelector
                       selectedSegments={selectedSegments}
@@ -277,28 +277,32 @@ export function CreateEventDialog({
                     />
                   </div>
 
-                  <div className="min-h-0 flex flex-col gap-3">
-                    <div className="rounded-2xl border bg-card p-4">
-                      <p className="text-sm font-medium">Invite list</p>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        {selectedIndividuals.length} individuals selected directly.
-                      </p>
-                      {selectedSegments.length > 0 && (
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {selectedSegments.length} segments selected ({estimatedSegmentMembers} estimated members).
-                        </p>
-                      )}
-                    </div>
+                  <div className="min-h-0">
+                    <ScrollArea className="h-full rounded-2xl border bg-muted/20">
+                      <div className="flex min-h-full flex-col gap-3 p-3">
+                        <div className="rounded-2xl border bg-card p-4">
+                          <p className="text-sm font-medium">Invite list</p>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {selectedIndividuals.length} individuals selected directly.
+                          </p>
+                          {selectedSegments.length > 0 && (
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              {selectedSegments.length} segments selected ({estimatedSegmentMembers} estimated members).
+                            </p>
+                          )}
+                        </div>
 
-                    <div className="rounded-2xl border bg-muted/40 p-4">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium">Total attendees</p>
-                        <Badge variant="secondary">{estimatedSegmentMembers + selectedIndividuals.length}</Badge>
+                        <div className="rounded-2xl border bg-muted/40 p-4">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium">Total attendees</p>
+                            <Badge variant="secondary">{estimatedSegmentMembers + selectedIndividuals.length}</Badge>
+                          </div>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {selectedSegments.length} segments + {selectedIndividuals.length} individuals selected.
+                          </p>
+                        </div>
                       </div>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        {selectedSegments.length} segments + {selectedIndividuals.length} individuals selected.
-                      </p>
-                    </div>
+                    </ScrollArea>
                   </div>
                 </div>
               </div>

@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
+import logging
+import json
 
 from core.database import DatabaseManager
 from core.dependencies import get_db, get_current_user
@@ -9,6 +11,7 @@ from core.query_engine import execute_query_plan
 from core.embeddings import embed_text
 
 router = APIRouter(prefix="/segments", tags=["Segments"])
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------ #
@@ -50,9 +53,17 @@ def preview_segment(
     - Executes the plan and returns pre-selected contacts for user approval.
     """
     org_id = current_user["org_id"]
+    logger.info("segments.preview start org_id=%s prompt=%r", org_id, body.prompt)
 
     # Context validation
     validation = validate_prompt_context(body.prompt, "segments")
+    logger.info(
+        "segments.preview context_validation org_id=%s is_valid=%s detected=%r correct_context=%r",
+        org_id,
+        validation.get("is_valid"),
+        validation.get("detected_intent"),
+        validation.get("correct_context"),
+    )
     if not validation.get("is_valid"):
         return {
             "valid": False,
@@ -62,10 +73,17 @@ def preview_segment(
 
     # Build query plan
     schema = db.get_attribute_defs(org_id)
+    logger.info("segments.preview schema_loaded org_id=%s attr_defs=%s", org_id, len(schema or []))
     query_plan = build_contact_query_plan(body.prompt, schema)
+    logger.info(
+        "segments.preview query_plan org_id=%s plan=%s",
+        org_id,
+        json.dumps(query_plan, default=str),
+    )
 
     # Execute plan
     contacts = execute_query_plan(db, org_id, query_plan)
+    logger.info("segments.preview executed org_id=%s matched_contacts=%s", org_id, len(contacts or []))
 
     meta = suggest_segment_metadata(body.prompt, len(contacts), query_plan)
 

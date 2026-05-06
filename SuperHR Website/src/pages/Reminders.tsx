@@ -276,7 +276,31 @@ export default function Reminders() {
         assignableUsers={assignableUsers}
         canAssignToOthers={isAdmin}
       />
-      <AlertDialog open={showCompletionDialog} onOpenChange={setShowCompletionDialog}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle className="flex items-center gap-2"><CheckCircle className="h-5 w-5 text-success" />Complete Task</AlertDialogTitle><AlertDialogDescription>You're marking "{completingTask?.title}" as complete.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter className="flex-col gap-2 sm:flex-row"><AlertDialogCancel>Cancel</AlertDialogCancel><Button variant="outline" onClick={() => handleCompleteTask(true, false)}>Complete & Notify</Button><Button variant="outline" onClick={() => handleCompleteTask(false, true)}>Complete & Delete</Button><AlertDialogAction onClick={() => handleCompleteTask(false, false)}>Just Complete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={showCompletionDialog} onOpenChange={setShowCompletionDialog}>
+        <AlertDialogContent className="max-h-[min(90vh,32rem)] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 pr-8">
+              <CheckCircle className="h-5 w-5 shrink-0 text-success" />
+              Complete Task
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {`You're marking "${completingTask?.title ?? ''}" as complete.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex w-full flex-col gap-2 sm:flex-col sm:space-x-0">
+            <AlertDialogCancel className="mt-0 w-full sm:mt-0">Cancel</AlertDialogCancel>
+            <Button type="button" variant="outline" className="w-full" onClick={() => handleCompleteTask(true, false)}>
+              Complete & Notify
+            </Button>
+            <Button type="button" variant="outline" className="w-full" onClick={() => handleCompleteTask(false, true)}>
+              Complete & Delete
+            </Button>
+            <AlertDialogAction className="w-full" onClick={() => handleCompleteTask(false, false)}>
+              Just Complete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -5,6 +5,7 @@ from typing import List, Dict, Optional, Any
 import logging
 import threading
 import json
+from datetime import date, datetime, timedelta
 
 from core.config import get_settings
 
@@ -764,6 +765,76 @@ class DatabaseManager:
     #  Contact Attribute Values                                            #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _coerce_attribute_value(field_type: str, value):
+        if value is None:
+            return None
+
+        if isinstance(value, str):
+            value = value.strip()
+            if value == "":
+                return None
+
+        if field_type == "text":
+            return str(value)
+
+        if field_type == "number":
+            if isinstance(value, (int, float)):
+                return value
+            if isinstance(value, str):
+                cleaned = value.replace(",", "")
+                return float(cleaned)
+            raise ValueError(f"Invalid number value: {value!r}")
+
+        if field_type == "boolean":
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            if isinstance(value, str):
+                lowered = value.lower()
+                if lowered in {"true", "1", "yes", "y"}:
+                    return True
+                if lowered in {"false", "0", "no", "n"}:
+                    return False
+            raise ValueError(f"Invalid boolean value: {value!r}")
+
+        if field_type == "date":
+            if isinstance(value, datetime):
+                return value.date()
+            if isinstance(value, date):
+                return value
+            if isinstance(value, (int, float)):
+                # Excel serial date (Windows base date 1899-12-30)
+                serial = float(value)
+                if serial > 0:
+                    return (datetime(1899, 12, 30) + timedelta(days=serial)).date()
+            if isinstance(value, str):
+                raw = value.strip()
+                # Common Excel/pandas output: "YYYY-MM-DD HH:MM:SS"
+                if " " in raw and "-" in raw:
+                    raw = raw.split(" ", 1)[0]
+                # ISO-ish fallback
+                try:
+                    return datetime.fromisoformat(raw.replace("Z", "")).date()
+                except Exception:
+                    pass
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%m-%d-%Y", "%Y/%m/%d", "%d.%m.%Y"):
+                    try:
+                        return datetime.strptime(raw, fmt).date()
+                    except ValueError:
+                        continue
+                # Excel serial represented as string
+                try:
+                    serial = float(raw)
+                    if serial > 0:
+                        return (datetime(1899, 12, 30) + timedelta(days=serial)).date()
+                except Exception:
+                    pass
+            raise ValueError(f"Invalid date value: {value!r}")
+
+        return value
+
     def upsert_attribute_value(
         self,
         contact_id: int,
@@ -779,6 +850,7 @@ class DatabaseManager:
             "boolean": "value_boolean",
         }
         col = col_map.get(field_type, "value_text")
+        coerced_value = self._coerce_attribute_value(field_type, value)
         self.execute_query(
             f"""
             INSERT INTO contact_attribute_values
@@ -787,7 +859,7 @@ class DatabaseManager:
             ON CONFLICT (contact_id, attr_def_id) DO UPDATE
                 SET {col} = EXCLUDED.{col}, updated_at = NOW()
             """,
-            (contact_id, attr_def_id, org_id, value),
+            (contact_id, attr_def_id, org_id, coerced_value),
             fetch="none",
         )
 
@@ -1528,6 +1600,7 @@ class DatabaseManager:
         events_row = self.execute_query(
             """
             SELECT
+              COUNT(*) AS total,
               COUNT(*) FILTER (WHERE status IN ('scheduled') AND event_date IS NOT NULL AND event_date >= NOW()) AS upcoming,
               COUNT(*) FILTER (WHERE status = 'completed') AS completed
             FROM events
@@ -1535,7 +1608,7 @@ class DatabaseManager:
             """,
             (org_id,),
             fetch="one",
-        ) or {"upcoming": 0, "completed": 0}
+        ) or {"total": 0, "upcoming": 0, "completed": 0}
 
         reminders_row = self.execute_query(
             """
@@ -1578,6 +1651,7 @@ class DatabaseManager:
             "contacts": contacts,
             "segments": segments,
             "campaigns_total": campaigns_total,
+            "events_total": int(events_row.get("total") or 0),
             "events_upcoming": int(events_row.get("upcoming") or 0),
             "events_completed": int(events_row.get("completed") or 0),
             "reminders_open": reminders_open,
@@ -1967,12 +2041,13 @@ class DatabaseManager:
         org_id: int,
         contact_ids: Optional[List[int]] = None,
         exact_filters: Optional[List[Dict]] = None,
+        exact_logic: str = "AND",
     ) -> List[Dict]:
         """
         Executes exact-match filters against contacts + contact_attribute_values.
 
         exact_filters: list of {field_name, op, value}
-          op: eq | neq | contains | gt | lt | gte | lte
+          op: eq | neq | contains | not_contains | starts_with | ends_with | gt | lt | gte | lte | is_null | is_not_null
           field_name: core field or custom attribute field_name
 
         If contact_ids is provided, only those contacts are considered
@@ -1981,35 +2056,130 @@ class DatabaseManager:
         # IMPORTANT: SQL placeholders in `JOIN ... ad.field_name = %s AND ad.org_id = %s`
         # appear *before* the `WHERE ... c.org_id = %s` placeholders.
         # So we must build `join_params` first, then `where_params`, and pass params in that order.
-        where_conditions = ["c.org_id = %s"]
+        base_conditions = ["c.org_id = %s"]
+        filter_conditions: List[str] = []
         where_params: List[Any] = [org_id]
         core_fields = {"first_name", "last_name", "email", "phone"}
         joins: List[str] = []
         join_idx = 0
         join_params: List[Any] = []
+        attr_defs_by_name = {
+            (row.get("field_name") or ""): row
+            for row in self.get_attribute_defs(org_id)
+        }
+        logger.info(
+            "db.run_contact_filter_query start org_id=%s seeded_contact_ids=%s exact_filters=%s",
+            org_id,
+            len(contact_ids) if contact_ids else 0,
+            len(exact_filters or []),
+        )
 
         if contact_ids:
-            where_conditions.append("c.contact_id = ANY(%s)")
+            base_conditions.append("c.contact_id = ANY(%s)")
             where_params.append(contact_ids)
 
         for f in (exact_filters or []):
             field = f["field_name"]
             op    = f["op"]
             val   = f["value"]
+            normalized_op = (op or "").lower()
             pg_op = {
                 "eq": "=", "neq": "!=", "gt": ">",
                 "lt": "<", "gte": ">=", "lte": "<=",
-            }.get(op, "=")
+            }.get(normalized_op, "=")
 
             if field in core_fields:
-                if op == "contains":
-                    where_conditions.append(f"c.{field} ILIKE %s")
+                if normalized_op in {"is_null", "isnull"}:
+                    filter_conditions.append(f"c.{field} IS NULL")
+                elif normalized_op in {"is_not_null", "isnotnull"}:
+                    filter_conditions.append(f"c.{field} IS NOT NULL")
+                elif val is None and normalized_op in {"eq", "neq"}:
+                    filter_conditions.append(f"c.{field} IS NULL" if normalized_op == "eq" else f"c.{field} IS NOT NULL")
+                elif normalized_op == "contains":
+                    filter_conditions.append(f"c.{field} ILIKE %s")
                     where_params.append(f"%{val}%")
+                elif normalized_op == "not_contains":
+                    filter_conditions.append(f"COALESCE(c.{field}, '') NOT ILIKE %s")
+                    where_params.append(f"%{val}%")
+                elif normalized_op == "starts_with":
+                    filter_conditions.append(f"c.{field} ILIKE %s")
+                    where_params.append(f"{val}%")
+                elif normalized_op == "ends_with":
+                    filter_conditions.append(f"c.{field} ILIKE %s")
+                    where_params.append(f"%{val}")
+                elif isinstance(val, str) and normalized_op in {"eq", "neq"}:
+                    filter_conditions.append(
+                        f"LOWER(TRIM(COALESCE(c.{field}, ''))) {'=' if normalized_op == 'eq' else '!='} LOWER(TRIM(%s))"
+                    )
+                    where_params.append(val)
                 else:
-                    where_conditions.append(f"c.{field} {pg_op} %s")
+                    filter_conditions.append(f"c.{field} {pg_op} %s")
                     where_params.append(val)
             else:
                 a = f"av{join_idx}"
+                attr_def = attr_defs_by_name.get(field)
+                field_type = (attr_def or {}).get("field_type")
+                logger.info(
+                    "db.run_contact_filter_query custom_filter field=%s op=%s value=%r field_type=%s",
+                    field,
+                    normalized_op,
+                    val,
+                    field_type,
+                )
+                # For null checks on custom fields, use EXISTS / NOT EXISTS so contacts
+                # without an attribute row are handled correctly.
+                if normalized_op in {"is_null", "isnull"} or (val is None and normalized_op == "eq"):
+                    if field_type == "date":
+                        filter_conditions.append(
+                            "NOT EXISTS ("
+                            " SELECT 1 FROM contact_attribute_values cavx"
+                            " JOIN contact_attribute_defs cadx ON cadx.attr_def_id = cavx.attr_def_id"
+                            " WHERE cavx.contact_id = c.contact_id"
+                            "   AND cadx.org_id = %s"
+                            "   AND cadx.field_name = %s"
+                            "   AND (cavx.value_date IS NOT NULL OR NULLIF(TRIM(COALESCE(cavx.value_text, '')), '') IS NOT NULL)"
+                            ")"
+                        )
+                    else:
+                        filter_conditions.append(
+                            "NOT EXISTS ("
+                            " SELECT 1 FROM contact_attribute_values cavx"
+                            " JOIN contact_attribute_defs cadx ON cadx.attr_def_id = cavx.attr_def_id"
+                            " WHERE cavx.contact_id = c.contact_id"
+                            "   AND cadx.org_id = %s"
+                            "   AND cadx.field_name = %s"
+                            "   AND NULLIF(TRIM(COALESCE(cavx.value_text, '')), '') IS NOT NULL"
+                            ")"
+                        )
+                    where_params.extend([org_id, field])
+                    continue
+
+                if normalized_op in {"is_not_null", "isnotnull"} or (val is None and normalized_op == "neq"):
+                    if field_type == "date":
+                        filter_conditions.append(
+                            "EXISTS ("
+                            " SELECT 1 FROM contact_attribute_values cavx"
+                            " JOIN contact_attribute_defs cadx ON cadx.attr_def_id = cavx.attr_def_id"
+                            " WHERE cavx.contact_id = c.contact_id"
+                            "   AND cadx.org_id = %s"
+                            "   AND cadx.field_name = %s"
+                            "   AND (cavx.value_date IS NOT NULL OR NULLIF(TRIM(COALESCE(cavx.value_text, '')), '') IS NOT NULL)"
+                            ")"
+                        )
+                    else:
+                        filter_conditions.append(
+                            "EXISTS ("
+                            " SELECT 1 FROM contact_attribute_values cavx"
+                            " JOIN contact_attribute_defs cadx ON cadx.attr_def_id = cavx.attr_def_id"
+                            " WHERE cavx.contact_id = c.contact_id"
+                            "   AND cadx.org_id = %s"
+                            "   AND cadx.field_name = %s"
+                            "   AND NULLIF(TRIM(COALESCE(cavx.value_text, '')), '') IS NOT NULL"
+                            ")"
+                        )
+                    where_params.extend([org_id, field])
+                    continue
+
                 join_idx += 1
                 joins.append(
                     f"JOIN contact_attribute_values {a} "
@@ -2020,20 +2190,53 @@ class DatabaseManager:
                     f"  AND ad{a}.org_id = %s"
                 )
                 join_params.extend([field, org_id])
-                typed_col = (
-                    f"{a}.value_boolean" if isinstance(val, bool) else
-                    f"{a}.value_number"  if isinstance(val, (int, float)) else
-                    f"{a}.value_text"
-                )
-                if op == "contains":
-                    where_conditions.append(f"{a}.value_text ILIKE %s")
-                    where_params.append(f"%{val}%")
+                # IMPORTANT: use schema field_type first (especially for date fields),
+                # then fall back to value-shape inference.
+                if field_type == "date":
+                    typed_col = f"{a}.value_date"
+                elif field_type == "number":
+                    typed_col = f"{a}.value_number"
+                elif field_type == "boolean":
+                    typed_col = f"{a}.value_boolean"
                 else:
-                    where_conditions.append(f"{typed_col} {pg_op} %s")
+                    typed_col = (
+                        f"{a}.value_boolean" if isinstance(val, bool) else
+                        f"{a}.value_number"  if isinstance(val, (int, float)) else
+                        f"{a}.value_text"
+                    )
+                if normalized_op == "contains":
+                    filter_conditions.append(f"{a}.value_text ILIKE %s")
+                    where_params.append(f"%{val}%")
+                elif normalized_op == "not_contains":
+                    filter_conditions.append(f"COALESCE({a}.value_text, '') NOT ILIKE %s")
+                    where_params.append(f"%{val}%")
+                elif normalized_op == "starts_with":
+                    filter_conditions.append(f"{a}.value_text ILIKE %s")
+                    where_params.append(f"{val}%")
+                elif normalized_op == "ends_with":
+                    filter_conditions.append(f"{a}.value_text ILIKE %s")
+                    where_params.append(f"%{val}")
+                elif isinstance(val, str) and normalized_op in {"eq", "neq"}:
+                    if typed_col.endswith(".value_text"):
+                        filter_conditions.append(
+                            f"LOWER(TRIM(COALESCE({typed_col}, ''))) {'=' if normalized_op == 'eq' else '!='} LOWER(TRIM(%s))"
+                        )
+                        where_params.append(val)
+                    else:
+                        filter_conditions.append(f"{typed_col} {pg_op} %s")
+                        where_params.append(val)
+                else:
+                    filter_conditions.append(f"{typed_col} {pg_op} %s")
                     where_params.append(val)
 
         join_sql  = " ".join(joins)
-        where_sql = " AND ".join(where_conditions)
+        normalized_logic = (exact_logic or "AND").upper()
+        if normalized_logic not in {"AND", "OR"}:
+            normalized_logic = "AND"
+        where_sql = " AND ".join(base_conditions)
+        if filter_conditions:
+            glue = f" {normalized_logic} "
+            where_sql += f" AND ({glue.join(filter_conditions)})"
         sql = (
             f"SELECT DISTINCT c.contact_id, c.first_name, c.last_name, "
             f"c.email, c.phone, c.created_at "
@@ -2042,4 +2245,18 @@ class DatabaseManager:
             f"ORDER BY c.last_name, c.first_name "
             f"LIMIT 500"
         )
-        return self.execute_query(sql, tuple(join_params + where_params), fetch="all")
+        sql_params = tuple(join_params + where_params)
+        logger.info(
+            "db.run_contact_filter_query sql org_id=%s joins=%s where_conditions=%s params=%r",
+            org_id,
+            len(joins),
+            len(base_conditions) + len(filter_conditions),
+            sql_params,
+        )
+        rows = self.execute_query(sql, sql_params, fetch="all")
+        logger.info(
+            "db.run_contact_filter_query done org_id=%s returned_rows=%s",
+            org_id,
+            len(rows or []),
+        )
+        return rows

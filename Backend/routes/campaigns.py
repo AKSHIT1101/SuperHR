@@ -83,11 +83,14 @@ class CampaignUpdateRequest(BaseModel):
 
 
 class CampaignComposeRequest(BaseModel):
-    prompt: str
+    prompt: str = ""
     channel: str  # email | whatsapp
     event_name: Optional[str] = None
     event_action: Optional[str] = None  # invite | cancel
     segment_names: Optional[List[str]] = None
+    event_description: Optional[str] = None
+    event_location: Optional[str] = None
+    event_when: Optional[str] = None  # human-readable datetime for the invite
 
 
 # ------------------------------------------------------------------ #
@@ -182,12 +185,15 @@ def compose_campaign(
     merge_doc = format_merge_documentation(db.get_attribute_defs(org_id), extras)
 
     result = compose_campaign_content(
-        prompt=body.prompt,
+        prompt=body.prompt or "",
         channel=body.channel,
         event_name=body.event_name,
         event_action=body.event_action,
         segment_names=body.segment_names or [],
         merge_fields_documentation=merge_doc,
+        event_description=body.event_description,
+        event_location=body.event_location,
+        event_when=body.event_when,
     )
     result["merge_placeholder_hints"] = merge_doc
     return result

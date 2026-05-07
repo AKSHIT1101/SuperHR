@@ -1669,6 +1669,36 @@ class DatabaseManager:
             "whatsapp_sent": 0,
         }
 
+        period_row = self.execute_query(
+            """
+            SELECT
+              (
+                SELECT COUNT(*)::bigint FROM contacts
+                WHERE org_id = %s AND email IS NOT NULL AND TRIM(email) <> ''
+              ) AS contacts_active,
+              (
+                SELECT COUNT(*)::bigint FROM events
+                WHERE org_id = %s AND event_date IS NOT NULL
+                  AND event_date >= date_trunc('month', CURRENT_TIMESTAMP)
+                  AND event_date < date_trunc('month', CURRENT_TIMESTAMP) + interval '1 month'
+              ) AS events_this_month,
+              (
+                SELECT COUNT(*)::bigint FROM campaigns
+                WHERE org_id = %s
+                  AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)
+                  AND created_at < date_trunc('month', CURRENT_TIMESTAMP) + interval '1 month'
+              ) AS campaigns_this_month,
+              (
+                SELECT COALESCE(SUM(sent_count), 0)::bigint FROM campaigns
+                WHERE org_id = %s AND channel = 'email' AND sent_at IS NOT NULL
+                  AND sent_at >= date_trunc('month', CURRENT_TIMESTAMP)
+                  AND sent_at < date_trunc('month', CURRENT_TIMESTAMP) + interval '1 month'
+              ) AS emails_sent_this_month
+            """,
+            (org_id, org_id, org_id, org_id),
+            fetch="one",
+        ) or {}
+
         return {
             "contacts": contacts,
             "segments": segments,
@@ -1684,7 +1714,63 @@ class DatabaseManager:
             "messages_clicked": int(message_totals_row.get("messages_clicked") or 0),
             "emails_sent": int(message_totals_row.get("emails_sent") or 0),
             "whatsapp_sent": int(message_totals_row.get("whatsapp_sent") or 0),
+            # additive dashboard helpers (existing clients ignore unknown keys)
+            "contacts_active": int(period_row.get("contacts_active") or 0),
+            "events_this_month": int(period_row.get("events_this_month") or 0),
+            "campaigns_this_month": int(period_row.get("campaigns_this_month") or 0),
+            "emails_sent_this_month": int(period_row.get("emails_sent_this_month") or 0),
         }
+
+    def get_dashboard_monthly_activity(self, org_id: int, months: int = 6) -> List[Dict]:
+        """Monthly totals for dashboard chart (additive helper).
+
+        contacts = cumulative contact rows existing through each month end;
+        emails = email-channel sends attributed by campaign.sent_at in month;
+        events = rows whose event_date falls in calendar month.
+        """
+        months = max(1, min(24, int(months)))
+        rows = self.execute_query(
+            """
+            WITH bounds AS (
+              SELECT generate_series(
+                date_trunc('month', CURRENT_TIMESTAMP) - ((%s::integer - 1) * interval '1 month'),
+                date_trunc('month', CURRENT_TIMESTAMP),
+                interval '1 month'
+              ) AS month_start
+            )
+            SELECT
+              month_start,
+              to_char(month_start, 'Mon YY') AS month_label,
+              (
+                SELECT COUNT(*)::bigint FROM contacts c
+                WHERE c.org_id = %s AND c.created_at < month_start + interval '1 month'
+              ) AS contacts_total,
+              (
+                SELECT COALESCE(SUM(cp.sent_count), 0)::bigint FROM campaigns cp
+                WHERE cp.org_id = %s AND cp.channel = 'email' AND cp.sent_at IS NOT NULL
+                  AND cp.sent_at >= month_start AND cp.sent_at < month_start + interval '1 month'
+              ) AS emails_sent,
+              (
+                SELECT COUNT(*)::bigint FROM events ev
+                WHERE ev.org_id = %s AND ev.event_date IS NOT NULL
+                  AND ev.event_date >= month_start AND ev.event_date < month_start + interval '1 month'
+              ) AS events_count
+            FROM bounds
+            ORDER BY month_start ASC
+            """,
+            (months, org_id, org_id, org_id),
+            fetch="all",
+        ) or []
+
+        return [
+            {
+                "month": r["month_label"],
+                "contacts": int(r["contacts_total"] or 0),
+                "emails": int(r["emails_sent"] or 0),
+                "events": int(r["events_count"] or 0),
+            }
+            for r in rows
+        ]
 
     def get_timeseries(
         self,

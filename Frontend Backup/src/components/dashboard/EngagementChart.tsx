@@ -12,24 +12,24 @@ import {
 export function EngagementChart({
   data = [],
 }: {
-  data?: Array<{ month: string; emails: number; opens?: number; responses?: number }>;
+  data?: Array<{ month: string; contacts: number; emails: number; events: number }>;
 }) {
   return (
     <div className="chart-container">
-      <h3 className="font-semibold mb-4">Engagement Trend</h3>
+      <h3 className="font-semibold mb-4">Contacts, emails & events</h3>
       <div className="h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data}>
             <defs>
-              <linearGradient id="colorEmails" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id="colorContacts" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
                 <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
               </linearGradient>
-              <linearGradient id="colorOpens" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id="colorEmails" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="hsl(var(--chart-2))" stopOpacity={0.3} />
                 <stop offset="95%" stopColor="hsl(var(--chart-2))" stopOpacity={0} />
               </linearGradient>
-              <linearGradient id="colorResponses" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id="colorEvents" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="hsl(var(--chart-3))" stopOpacity={0.3} />
                 <stop offset="95%" stopColor="hsl(var(--chart-3))" stopOpacity={0} />
               </linearGradient>
@@ -42,9 +42,19 @@ export function EngagementChart({
               tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
             />
             <YAxis
+              yAxisId="left"
               axisLine={false}
               tickLine={false}
               tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+            />
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+              width={36}
+              allowDecimals={false}
             />
             <Tooltip
               contentStyle={{
@@ -57,29 +67,32 @@ export function EngagementChart({
             <Legend />
             <Area
               type="monotone"
-              dataKey="emails"
-              name="Emails Sent"
+              dataKey="contacts"
+              name="Contacts"
+              yAxisId="left"
               stroke="hsl(var(--chart-1))"
+              fillOpacity={1}
+              fill="url(#colorContacts)"
+              strokeWidth={2}
+            />
+            <Area
+              type="monotone"
+              dataKey="emails"
+              name="Emails sent"
+              yAxisId="left"
+              stroke="hsl(var(--chart-2))"
               fillOpacity={1}
               fill="url(#colorEmails)"
               strokeWidth={2}
             />
             <Area
               type="monotone"
-              dataKey="opens"
-              name="Opens"
-              stroke="hsl(var(--chart-2))"
-              fillOpacity={1}
-              fill="url(#colorOpens)"
-              strokeWidth={2}
-            />
-            <Area
-              type="monotone"
-              dataKey="responses"
-              name="Responses"
+              dataKey="events"
+              name="Events"
+              yAxisId="right"
               stroke="hsl(var(--chart-3))"
               fillOpacity={1}
-              fill="url(#colorResponses)"
+              fill="url(#colorEvents)"
               strokeWidth={2}
             />
           </AreaChart>

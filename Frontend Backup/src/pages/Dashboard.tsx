@@ -33,19 +33,6 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Alert Banner */}
-      <div className="alert-banner rounded-lg p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <AlertTriangle className="h-5 w-5 text-warning" />
-          <div>
-            <span className="font-medium">Action Required:</span>
-            <span className="ml-1 text-muted-foreground">
-              No emails sent in the past 7 days. 15 contacts are due for follow-up.
-            </span>
-          </div>
-        </div>
-        <Button size="sm" variant="outline" className="shrink-0">View Details</Button>
-      </div>
 
       {/* Reminders Section */}
       <div className="rounded-xl border bg-card p-5">
@@ -54,20 +41,8 @@ export default function Dashboard() {
             <Bell className="h-4 w-4 text-muted-foreground" />
             My Reminders
           </h3>
-          <Tabs value={reminderTab} onValueChange={(v) => setReminderTab(v as 'ai' | 'self')}>
-            <TabsList className="h-8">
-              <TabsTrigger value="self" className="text-xs gap-1 h-7">
-                <User className="h-3 w-3" />
-                Self ({selfTasks.length})
-              </TabsTrigger>
-              <TabsTrigger value="ai" className="text-xs gap-1 h-7">
-                <Sparkles className="h-3 w-3" />
-                AI ({aiTasks.length})
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
         </div>
-        
+
         {displayTasks.length > 0 ? (
           <div className="space-y-2">
             {displayTasks.map((task) => (
@@ -93,7 +68,7 @@ export default function Dashboard() {
             No {reminderTab === 'ai' ? 'AI-generated' : 'self-created'} reminders
           </div>
         )}
-        
+
         <Button variant="link" size="sm" className="text-primary mt-2 p-0 h-auto" onClick={() => navigate('/reminders')}>
           View all reminders →
         </Button>
@@ -101,10 +76,7 @@ export default function Dashboard() {
 
       <div className="rounded-2xl border bg-card p-5">
         <div className="mb-3 flex items-center gap-2 text-sm text-muted-foreground"><Wand2 className="h-4 w-4 text-primary" />What do you want to do today?</div>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <Input placeholder="e.g., Create a WhatsApp campaign for high-engagement leads in Mumbai and draft follow-ups" className="flex-1" />
-          <Button className="gap-2"><Sparkles className="h-4 w-4" />Run with AI</Button>
-        </div>
+
         <div className="mt-3 flex flex-wrap gap-2">
           <Button size="sm" variant="outline" className="gap-2" onClick={() => navigate('/contacts')}><UserPlus className="h-3.5 w-3.5" />Import contacts</Button>
           <Button size="sm" variant="outline" className="gap-2" onClick={() => navigate('/segments')}><Users className="h-3.5 w-3.5" />Build segment</Button>
@@ -138,9 +110,9 @@ export default function Dashboard() {
           variant="accent"
         />
         <MetricCard
-          title="Response Rate"
-          value={`${mockMetrics.avgResponseRate}%`}
-          subtitle="Average"
+          title="Campaigns This Month"
+          value={mockMetrics.campaignsThisMonth}
+          subtitle="Active campaigns"
           icon={TrendingUp}
           trend={{ value: -2.3, isPositive: false }}
           variant="warning"
@@ -151,27 +123,10 @@ export default function Dashboard() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
           <EngagementChart data={mockMetrics.engagementTrend} />
-          <div className="grid gap-6 sm:grid-cols-2">
-            <ContactTypeChart title="Contacts by Type" data={mockMetrics.contactsByType} />
-            <EventPerformanceChart data={mockMetrics.eventPerformance} />
-          </div>
         </div>
 
         <div className="space-y-6">
-          <div className="rounded-xl border bg-card p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-primary ai-pulse"></span>
-                AI Insights
-              </h3>
-              <Button variant="link" size="sm" className="text-primary">View All</Button>
-            </div>
-            <div className="space-y-3">
-              {activeInsights.map((insight) => (
-                <AIInsightCard key={insight.id} insight={insight} />
-              ))}
-            </div>
-          </div>
+
 
           <div className="rounded-xl border bg-card p-5">
             <div className="flex items-center justify-between mb-4">

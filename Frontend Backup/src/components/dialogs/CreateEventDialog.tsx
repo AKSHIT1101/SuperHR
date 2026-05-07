@@ -239,6 +239,9 @@ export function CreateEventDialog({
                         <p className="text-sm font-medium">Prefilled attendees</p>
                         <Badge variant="secondary">{estimatedSegmentMembers + allAttendeeIds.length}</Badge>
                       </div>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Estimate before you open the attendee list (segments + individuals from AI).
+                      </p>
                       <p className="mt-2 text-sm text-muted-foreground">You’ll select the attendee list next.</p>
                     </div>
                   </div>
@@ -251,7 +254,7 @@ export function CreateEventDialog({
                     <h2 className="text-xl font-semibold">Select Attendees</h2>
                     <p className="mt-1 text-sm text-muted-foreground">Choose segments and/or individuals for the invite list.</p>
                   </div>
-                  <Badge variant="secondary">{estimatedSegmentMembers + selectedIndividuals.length} total</Badge>
+                  <Badge variant="secondary">{allAttendeeIds.length} people</Badge>
                 </div>
 
                 <div className="grid h-full min-h-0 flex-1 gap-4 lg:grid-cols-[1fr_320px]">
@@ -283,11 +286,11 @@ export function CreateEventDialog({
                         <div className="rounded-2xl border bg-card p-4">
                           <p className="text-sm font-medium">Invite list</p>
                           <p className="mt-2 text-sm text-muted-foreground">
-                            {selectedIndividuals.length} individuals selected directly.
+                            {allAttendeeIds.length} people selected (unique). Segment members are included in this list.
                           </p>
                           {selectedSegments.length > 0 && (
                             <p className="mt-1 text-sm text-muted-foreground">
-                              {selectedSegments.length} segments selected ({estimatedSegmentMembers} estimated members).
+                              {selectedSegments.length} segment{selectedSegments.length !== 1 ? 's' : ''} selected.
                             </p>
                           )}
                         </div>
@@ -295,10 +298,10 @@ export function CreateEventDialog({
                         <div className="rounded-2xl border bg-muted/40 p-4">
                           <div className="flex items-center justify-between">
                             <p className="text-sm font-medium">Total attendees</p>
-                            <Badge variant="secondary">{estimatedSegmentMembers + selectedIndividuals.length}</Badge>
+                            <Badge variant="secondary">{allAttendeeIds.length}</Badge>
                           </div>
                           <p className="mt-2 text-sm text-muted-foreground">
-                            {selectedSegments.length} segments + {selectedIndividuals.length} individuals selected.
+                            Same count the event will use after save (unique contacts).
                           </p>
                         </div>
                       </div>
@@ -313,7 +316,7 @@ export function CreateEventDialog({
             {step === 'attendees' ? <Button variant="outline" onClick={() => setStep('details')}>Back</Button> : <div />}
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }}>Cancel</Button>
-              {step === 'details' ? <Button onClick={handleNext}>Next: Review Attendees</Button> : <Button onClick={handleSubmit}>Create Event ({estimatedSegmentMembers + selectedIndividuals.length})</Button>}
+              {step === 'details' ? <Button onClick={handleNext}>Next: Review Attendees</Button> : <Button onClick={handleSubmit}>Create Event ({allAttendeeIds.length})</Button>}
             </div>
           </div>
         </div>

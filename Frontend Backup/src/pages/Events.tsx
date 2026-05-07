@@ -58,7 +58,19 @@ export default function Events() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [filters, setFilters] = useState({ type: 'all', location: 'all', isVirtual: 'all' });
   const [aiPrompt, setAiPrompt] = useState('');
-  const [contacts, setContacts] = useState<Array<{ id: string; firstName: string; lastName: string; email?: string; phone?: string }>>([]);
+  const [contacts, setContacts] = useState<Array<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    email?: string;
+    phone?: string;
+    currentCity?: string;
+    department?: string;
+    engagementLevel?: string;
+    type?: string;
+    status?: string;
+    attributes?: Record<string, unknown>;
+  }>>([]);
   const [segments, setSegments] = useState<Array<{ id: string; name: string; memberCount: number }>>([]);
 
   const fetchEvents = async () => {
@@ -122,13 +134,22 @@ export default function Events() {
       }
 
       setContacts(
-        (allContacts || []).map((c: any) => ({
-          id: String(c.contact_id),
-          firstName: c.first_name,
-          lastName: c.last_name,
-          email: c.email || undefined,
-          phone: c.phone || undefined,
-        })),
+        (allContacts || []).map((c: any) => {
+          const attrs = c.attributes || {};
+          return {
+            id: String(c.contact_id),
+            firstName: c.first_name,
+            lastName: c.last_name,
+            email: c.email || undefined,
+            phone: c.phone || undefined,
+            currentCity: c.current_city || attrs.current_city || attrs.city || attrs.location || undefined,
+            department: c.department || attrs.department || undefined,
+            engagementLevel: c.engagement_level || attrs.engagement_level || attrs.engagement || undefined,
+            type: c.type || attrs.type || attrs.contact_type || undefined,
+            status: c.status || attrs.status || undefined,
+            attributes: attrs,
+          };
+        }),
       );
 
       setSegments(

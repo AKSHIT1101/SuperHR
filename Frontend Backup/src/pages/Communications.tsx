@@ -56,7 +56,20 @@ export default function Communications() {
   const [showCampaignDetail, setShowCampaignDetail] = useState(false);
   const [recentCampaigns, setRecentCampaigns] = useState<Array<{ id: number; name: string; type: 'email' | 'whatsapp'; sent: number; opened: number; clicked: number; date: string }>>([]);
   const [segments, setSegments] = useState<Array<{ id: string; name: string; memberIds: string[]; memberCount: number }>>([]);
-  const [contacts, setContacts] = useState<Array<{ id: string; firstName: string; lastName: string; email?: string; phone?: string; whatsapp?: string }>>([]);
+  const [contacts, setContacts] = useState<Array<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    email?: string;
+    phone?: string;
+    whatsapp?: string;
+    currentCity?: string;
+    department?: string;
+    engagementLevel?: string;
+    type?: string;
+    status?: string;
+    attributes?: Record<string, unknown>;
+  }>>([]);
 
   useEffect(() => {
     const state = location.state as any;
@@ -100,10 +113,7 @@ export default function Communications() {
 
   const currentTemplates = templates;
 
-  const totalRecipients = useMemo(() => {
-    const segmentCount = selectedSegments.reduce((sum, id) => sum + (segments.find((s) => s.id === id)?.memberCount || 0), 0);
-    return segmentCount + new Set(selectedIndividuals).size;
-  }, [selectedSegments, selectedIndividuals, segments]);
+  const totalRecipients = useMemo(() => new Set(selectedIndividuals).size, [selectedIndividuals]);
 
   const eventOutreachHasComposeContext = useMemo(() => {
     if (!eventOutreach) return false;
@@ -605,14 +615,23 @@ export default function Communications() {
         memberIds: [],
       }));
       setSegments(segs);
-      const cs = (allContacts || []).map((c: any) => ({
-        id: String(c.contact_id),
-        firstName: c.first_name,
-        lastName: c.last_name,
-        email: c.email || undefined,
-        phone: c.phone || undefined,
-        whatsapp: c.whatsapp || undefined,
-      }));
+      const cs = (allContacts || []).map((c: any) => {
+        const attrs = c.attributes || {};
+        return {
+          id: String(c.contact_id),
+          firstName: c.first_name,
+          lastName: c.last_name,
+          email: c.email || undefined,
+          phone: c.phone || undefined,
+          whatsapp: c.whatsapp || undefined,
+          currentCity: c.current_city || attrs.current_city || attrs.city || attrs.location || undefined,
+          department: c.department || attrs.department || undefined,
+          engagementLevel: c.engagement_level || attrs.engagement_level || attrs.engagement || undefined,
+          type: c.type || attrs.type || attrs.contact_type || undefined,
+          status: c.status || attrs.status || undefined,
+          attributes: attrs,
+        };
+      });
       setContacts(cs);
     } catch {
       setSegments([]);

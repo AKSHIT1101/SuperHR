@@ -42,7 +42,6 @@ export default function Reminders() {
     if (activeTab === 'pending') return task.status === 'pending';
     if (activeTab === 'in-progress') return task.status === 'in-progress';
     if (activeTab === 'completed') return task.status === 'completed';
-    if (activeTab === 'ai') return task.isAIGenerated;
     if (activeTab === 'self') return !task.isAIGenerated;
     return true;
   });
@@ -230,30 +229,30 @@ export default function Reminders() {
         </div>
       </section>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold">Reminder queue</h2><p className="text-sm text-muted-foreground">AI suggestions should feel like the primary workflow.</p></div><Button variant="outline" onClick={() => { setCreatePrefill(null); setShowCreateDialog(true); }}><Plus className="mr-2 h-4 w-4" />Open editor</Button></div>
-      <Card className="nudge-card border-l-4 border-l-primary"><CardContent className="flex items-start gap-3 pt-4"><div className="rounded-lg bg-primary/10 p-2"><Sparkles className="h-5 w-5 text-primary" /></div><div className="flex-1"><h4 className="font-medium">AI-Generated Tasks</h4><p className="mt-1 text-sm text-muted-foreground">Based on engagement patterns, we've suggested {taskCounts.ai} tasks that need attention.</p></div></CardContent></Card>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold">Reminder queue</h2></div><Button variant="outline" onClick={() => { setCreatePrefill(null); setShowCreateDialog(true); }}><Plus className="mr-2 h-4 w-4" />Open editor</Button></div>
+      {/* <Card className="nudge-card border-l-4 border-l-primary"><CardContent className="flex items-start gap-3 pt-4"><div className="rounded-lg bg-primary/10 p-2"><Sparkles className="h-5 w-5 text-primary" /></div><div className="flex-1"><h4 className="font-medium">AI-Generated Tasks</h4><p className="mt-1 text-sm text-muted-foreground">Based on engagement patterns, we've suggested {taskCounts.ai} tasks that need attention.</p></div></CardContent></Card> */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="flex-wrap"><TabsTrigger value="all" className="gap-2">All <Badge variant="secondary">{taskCounts.all}</Badge></TabsTrigger><TabsTrigger value="self" className="gap-2"><User className="h-3 w-3" />Self <Badge variant="secondary">{taskCounts.self}</Badge></TabsTrigger><TabsTrigger value="ai" className="gap-2"><Sparkles className="h-3 w-3" />AI <Badge variant="secondary">{taskCounts.ai}</Badge></TabsTrigger><TabsTrigger value="pending" className="gap-2">Pending <Badge variant="secondary">{taskCounts.pending}</Badge></TabsTrigger><TabsTrigger value="in-progress" className="gap-2">In Progress <Badge variant="secondary">{taskCounts['in-progress']}</Badge></TabsTrigger><TabsTrigger value="completed" className="gap-2">Completed <Badge variant="secondary">{taskCounts.completed}</Badge></TabsTrigger></TabsList>
+        <TabsList className="flex-wrap"><TabsTrigger value="all" className="gap-2">All <Badge variant="secondary">{taskCounts.all}</Badge></TabsTrigger><TabsTrigger value="self" className="gap-2"><User className="h-3 w-3" />Self <Badge variant="secondary">{taskCounts.self}</Badge></TabsTrigger><TabsTrigger value="pending" className="gap-2">Pending <Badge variant="secondary">{taskCounts.pending}</Badge></TabsTrigger><TabsTrigger value="in-progress" className="gap-2">In Progress <Badge variant="secondary">{taskCounts['in-progress']}</Badge></TabsTrigger><TabsTrigger value="completed" className="gap-2">Completed <Badge variant="secondary">{taskCounts.completed}</Badge></TabsTrigger></TabsList>
         <TabsContent value={activeTab} className="mt-6">
           {loading ? (
             <div className="py-10 text-center text-muted-foreground">Loading reminders…</div>
           ) : (
-          <div className="space-y-3">{filteredTasks.map((task) => (
-          <div key={task.id} className={cn('rounded-lg border border-l-4 p-4 transition-all hover:shadow-sm', priorityStyles[task.priority], task.status === 'completed' && 'opacity-60')}>
-            <div className="flex items-start gap-3">
-              <Checkbox checked={task.status === 'completed'} onCheckedChange={() => handleTaskCheck(task)} className="mt-1" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-2"><div><h4 className={cn('font-medium', task.status === 'completed' && 'line-through text-muted-foreground')}>{task.title}</h4><p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{task.description}</p></div><div className="flex shrink-0 items-center gap-2"><Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditTask(task)}><Edit2 className="h-4 w-4" /></Button><Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDeleteTask(task.id)}><Trash2 className="h-4 w-4" /></Button></div></div>
-                <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-                  <div className="flex items-center gap-2">{task.isAIGenerated ? <Badge variant="outline" className="gap-1"><Sparkles className="h-3 w-3" />AI</Badge> : <Badge variant="outline" className="gap-1"><User className="h-3 w-3" />Self</Badge>}<Badge className={priorityBadgeStyles[task.priority]}>{task.priority}</Badge></div>
-                  <div className="flex items-center gap-1"><Calendar className="h-3 w-3" /><span>Due: {new Date(task.dueDate).toLocaleDateString()}</span></div>
-                  <div className="flex items-center gap-1"><User className="h-3 w-3" /><span>{task.assignedTo}</span></div>
-                  <Badge variant="outline" className="text-xs capitalize">{task.type}</Badge>
+            <div className="space-y-3">{filteredTasks.map((task) => (
+              <div key={task.id} className={cn('rounded-lg border border-l-4 p-4 transition-all hover:shadow-sm', priorityStyles[task.priority], task.status === 'completed' && 'opacity-60')}>
+                <div className="flex items-start gap-3">
+                  <Checkbox checked={task.status === 'completed'} onCheckedChange={() => handleTaskCheck(task)} className="mt-1" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2"><div><h4 className={cn('font-medium', task.status === 'completed' && 'line-through text-muted-foreground')}>{task.title}</h4><p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{task.description}</p></div><div className="flex shrink-0 items-center gap-2"><Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditTask(task)}><Edit2 className="h-4 w-4" /></Button><Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDeleteTask(task.id)}><Trash2 className="h-4 w-4" /></Button></div></div>
+                    <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2">{task.isAIGenerated ? <Badge variant="outline" className="gap-1"><Sparkles className="h-3 w-3" />AI</Badge> : <Badge variant="outline" className="gap-1"><User className="h-3 w-3" />Self</Badge>}<Badge className={priorityBadgeStyles[task.priority]}>{task.priority}</Badge></div>
+                      <div className="flex items-center gap-1"><Calendar className="h-3 w-3" /><span>Due: {new Date(task.dueDate).toLocaleDateString()}</span></div>
+                      <div className="flex items-center gap-1"><User className="h-3 w-3" /><span>{task.assignedTo}</span></div>
+                      <Badge variant="outline" className="text-xs capitalize">{task.type}</Badge>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
-        ))}{filteredTasks.length === 0 && <div className="flex flex-col items-center justify-center py-12 text-center"><div className="mb-4 rounded-full bg-muted p-4"><Bell className="h-8 w-8 text-muted-foreground" /></div><h3 className="font-semibold">No reminders found</h3><p className="mt-1 text-muted-foreground">Create one to get started.</p></div>}</div>
+            ))}{filteredTasks.length === 0 && <div className="flex flex-col items-center justify-center py-12 text-center"><div className="mb-4 rounded-full bg-muted p-4"><Bell className="h-8 w-8 text-muted-foreground" /></div><h3 className="font-semibold">No reminders found</h3><p className="mt-1 text-muted-foreground">Create one to get started.</p></div>}</div>
           )}
         </TabsContent>
       </Tabs>

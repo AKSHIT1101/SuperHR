@@ -13,19 +13,28 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
 
-type UiContact = { id: string; firstName: string; lastName: string; email?: string; phone?: string; type?: string; department?: string; currentCity?: string; engagementLevel?: string; status?: string; photo?: string };
+type UiContact = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email?: string;
+  phone?: string;
+  type?: string;
+  department?: string;
+  currentCity?: string;
+  engagementLevel?: string;
+  status?: string;
+  photo?: string;
+  attributes?: Record<string, unknown>;
+  [key: string]: unknown;
+};
 type UiSegment = { id: string; name: string; description?: string; memberIds: string[]; memberCount: number; createdAt: string; updatedAt: string };
 
-const segmentFilterFields = [
+const defaultSegmentFilterFields = [
   { field_name: 'first_name', display_name: 'First Name' },
   { field_name: 'last_name', display_name: 'Last Name' },
   { field_name: 'email', display_name: 'Email' },
   { field_name: 'phone', display_name: 'Phone' },
-  { field_name: 'current_city', display_name: 'Location' },
-  { field_name: 'department', display_name: 'Department' },
-  { field_name: 'type', display_name: 'Type' },
-  { field_name: 'status', display_name: 'Status' },
-  { field_name: 'engagement_level', display_name: 'Engagement' },
 ];
 
 const aiSegmentSuggestions = [
@@ -55,6 +64,9 @@ export default function AudienceSegments() {
   const [contactSearch, setContactSearch] = useState('');
   const [filters, setFilters] = useState<{ field_name: string; op: string; value: string }[]>([]);
   const [appliedFilters, setAppliedFilters] = useState<{ field_name: string; op: string; value: string }[]>([]);
+  const [availableFilterFields, setAvailableFilterFields] = useState<{ field_name: string; display_name: string }[]>(
+    defaultSegmentFilterFields,
+  );
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
@@ -130,6 +142,7 @@ export default function AudienceSegments() {
         engagementLevel: c.engagement_level || attrs.engagement_level || attrs.engagement || undefined,
         status: c.status || attrs.status || undefined,
         photo: c.photo || undefined,
+        attributes: attrs,
       };
     });
       setContacts(mappedContacts);
@@ -144,6 +157,25 @@ export default function AudienceSegments() {
 
   useEffect(() => {
     fetchSegmentsAndContacts();
+    apiGet<any>('/contacts/filters')
+      .then((data) => {
+        const core = (data?.core_fields || []).map((f: any) => ({
+          field_name: String(f.field_name || ''),
+          display_name: String(f.display_name || f.field_name || ''),
+        }));
+        const custom = (data?.custom_fields || []).map((f: any) => ({
+          field_name: String(f.field_name || ''),
+          display_name: String(f.display_name || f.field_name || ''),
+        }));
+        const dynamicFields = [...core, ...custom].filter((f) => f.field_name);
+        if (!dynamicFields.length) return;
+        const deduped = new Map<string, { field_name: string; display_name: string }>();
+        [...defaultSegmentFilterFields, ...dynamicFields].forEach((f) => deduped.set(f.field_name, f));
+        setAvailableFilterFields(Array.from(deduped.values()));
+      })
+      .catch(() => {
+        // Keep fallback fields if metadata fetch fails.
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -158,8 +190,12 @@ export default function AudienceSegments() {
     setEditingSegment(null);
   };
 
+  const toCamelCase = (value: string) => value.replace(/_([a-z])/g, (_m, ch: string) => ch.toUpperCase());
+
   const getContactFieldValue = (contact: UiContact, fieldName: string) => {
     switch (fieldName) {
+      case 'full_name':
+        return `${contact.firstName || ''} ${contact.lastName || ''}`.trim();
       case 'first_name':
         return contact.firstName || '';
       case 'last_name':
@@ -179,7 +215,7 @@ export default function AudienceSegments() {
       case 'engagement_level':
         return contact.engagementLevel || '';
       default:
-        return '';
+        return String(contact[fieldName] ?? contact[toCamelCase(fieldName)] ?? contact.attributes?.[fieldName] ?? '');
     }
   };
 
@@ -279,11 +315,8 @@ export default function AudienceSegments() {
 
       // Ensure preselected matches are visible right away.
       setContactSearch('');
-      setFilterLocation('all');
-      setFilterDepartment('all');
-      setFilterType('all');
-      setFilterStatus('all');
-      setFilterEngagement('all');
+      setFilters([]);
+      setAppliedFilters([]);
       setShowCreateDialog(true);
 
       toast({
@@ -543,7 +576,7 @@ export default function AudienceSegments() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__field__">Field</SelectItem>
-                          {segmentFilterFields.map((field) => (
+                          {availableFilterFields.map((field) => (
                             <SelectItem key={field.field_name} value={field.field_name}>
                               {field.display_name}
                             </SelectItem>

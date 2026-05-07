@@ -36,22 +36,7 @@ export function SelectRecipientsDialog({
     onOpenChange(false);
   };
 
-  const totalRecipients = useMemo(() => {
-    const selectedAudienceSegments = selectedSegments
-      .map((segId) => audienceSegments.find((s) => s.id === segId))
-      .filter(Boolean) as AudienceSegment[];
-
-    const segmentMemberIds = selectedAudienceSegments.flatMap((seg) => seg.memberIds || []);
-    const uniqueIndividuals = new Set(selectedIndividuals);
-
-    // If `memberIds` aren’t available, fall back to `memberCount` for a reasonable estimate.
-    if (segmentMemberIds.length === 0) {
-      const segmentCount = selectedAudienceSegments.reduce((sum, seg) => sum + (seg.memberCount || 0), 0);
-      return segmentCount + uniqueIndividuals.size;
-    }
-
-    return [...new Set([...segmentMemberIds, ...uniqueIndividuals])].length;
-  }, [selectedSegments, selectedIndividuals, audienceSegments]);
+  const totalRecipients = useMemo(() => new Set(selectedIndividuals).size, [selectedIndividuals]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -77,7 +62,9 @@ export function SelectRecipientsDialog({
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium text-sm">Total Recipients: {totalRecipients}</p>
-                <p className="text-xs text-muted-foreground">{selectedSegments.length} segments + {selectedIndividuals.length} individuals</p>
+                <p className="text-xs text-muted-foreground">
+                  {selectedSegments.length} segment{selectedSegments.length !== 1 ? 's' : ''} selected · {totalRecipients} unique people
+                </p>
               </div>
             </div>
           </div>

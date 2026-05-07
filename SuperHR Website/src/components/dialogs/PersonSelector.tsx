@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X, Users, Filter, CheckSquare, ChevronRight, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,12 +12,11 @@ import { AudienceSegment } from '@/types/contact';
 import { cn } from '@/lib/utils';
 import { apiGet } from '@/lib/api';
 
-const selectorFilterFields = [
+const defaultSelectorFilterFields = [
   { field_name: 'first_name', display_name: 'First Name' },
   { field_name: 'last_name', display_name: 'Last Name' },
   { field_name: 'email', display_name: 'Email' },
   { field_name: 'phone', display_name: 'Phone' },
-  { field_name: 'current_city', display_name: 'Current City' },
 ];
 
 const normalize = (value?: string | null) => (value || '').trim().toLowerCase();
@@ -39,6 +38,7 @@ interface PersonSelectorProps {
     department?: string;
     engagementLevel?: string;
     currentCity?: string;
+    attributes?: Record<string, unknown>;
   }>;
   aiRecommendations?: string[];
   aiContext?: string;
@@ -64,6 +64,12 @@ export function PersonSelector({
   const [contactSearch, setContactSearch] = useState('');
   const [filters, setFilters] = useState<{ field_name: string; op: string; value: string }[]>([]);
   const [appliedFilters, setAppliedFilters] = useState<{ field_name: string; op: string; value: string }[]>([]);
+  const [availableFilterFields, setAvailableFilterFields] = useState<{ field_name: string; display_name: string }[]>(
+    defaultSelectorFilterFields,
+  );
+  const [segmentMemberMap, setSegmentMemberMap] = useState<Record<string, string[]>>({});
+  /** Segments the user unchecked manually — do not auto-select again while their full membership is still selected. */
+  const [autoSelectBlockedSegmentIds, setAutoSelectBlockedSegmentIds] = useState<string[]>([]);
   const [showFilters, setShowFilters] = useState(true);
   const [viewSegment, setViewSegment] = useState<AudienceSegment | null>(null);
   const [viewSegmentContacts, setViewSegmentContacts] = useState<Array<{
@@ -89,22 +95,136 @@ export function PersonSelector({
     attributes?: Record<string, unknown>;
   } | null>(null);
 
-  // If the dialog is opened with individuals preselected (common for edits / event->campaigns),
-  // avoid landing the user on the empty "Segments" tab.
   useEffect(() => {
-    if (activeTab !== 'segments') return;
-    if (selectedIndividuals.length === 0) return;
-    if (selectedSegments.length > 0) return;
-    setActiveTab('individuals');
-  }, [activeTab, selectedIndividuals.length, selectedSegments.length]);
+    apiGet<any>('/contacts/filters')
+      .then((data) => {
+        const core = (data?.core_fields || []).map((f: any) => ({
+          field_name: String(f.field_name || ''),
+          display_name: String(f.display_name || f.field_name || ''),
+        }));
+        const custom = (data?.custom_fields || []).map((f: any) => ({
+          field_name: String(f.field_name || ''),
+          display_name: String(f.display_name || f.field_name || ''),
+        }));
+        const dynamicFields = [...core, ...custom].filter((f) => f.field_name);
+        if (!dynamicFields.length) return;
+        const deduped = new Map<string, { field_name: string; display_name: string }>();
+        [...defaultSelectorFilterFields, ...dynamicFields].forEach((f) => deduped.set(f.field_name, f));
+        setAvailableFilterFields(Array.from(deduped.values()));
+      })
+      .catch(() => {
+        // Keep fallback fields if metadata fetch fails.
+      });
+  }, []);
+
+  const ensureSegmentMemberIds = async (segmentId: string): Promise<string[]> => {
+    if (segmentMemberMap[segmentId]) return segmentMemberMap[segmentId];
+    try {
+      const data = await apiGet<any>(`/segments/${segmentId}`);
+      const ids = (data?.contacts || [])
+        .map((c: any) => String(c.contact_id))
+        .filter((id: string) => id);
+      setSegmentMemberMap((prev) => ({ ...prev, [segmentId]: ids }));
+      return ids;
+    } catch {
+      setSegmentMemberMap((prev) => ({ ...prev, [segmentId]: [] }));
+      return [];
+    }
+  };
+
+  const ensureSegmentMemberIdsRef = useRef(ensureSegmentMemberIds);
+  ensureSegmentMemberIdsRef.current = ensureSegmentMemberIds;
+
+  useEffect(() => {
+    const syncIndividualsFromSelectedSegments = async () => {
+      if (selectedSegments.length === 0) return;
+      const memberLists = await Promise.all(
+        selectedSegments.map((segId) => ensureSegmentMemberIdsRef.current(segId)),
+      );
+      const mustBeSelected = new Set(memberLists.flat());
+      const merged = Array.from(new Set([...selectedIndividuals, ...mustBeSelected]));
+      if (merged.length !== selectedIndividuals.length) {
+        onIndividualsChange(merged);
+      }
+    };
+    void syncIndividualsFromSelectedSegments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSegments]);
+
+  // Drop auto-select blocks when the user edits individuals so a segment is no longer fully covered
+  // (then auto-select can apply again if they re-create the same membership).
+  useEffect(() => {
+    const indSet = new Set(selectedIndividuals);
+    setAutoSelectBlockedSegmentIds((prev) =>
+      prev.filter((segId) => {
+        const ids = segmentMemberMap[segId];
+        if (!ids || ids.length === 0) return true;
+        return ids.every((id) => indSet.has(id));
+      }),
+    );
+  }, [selectedIndividuals, segmentMemberMap]);
+
+  useEffect(() => {
+    if (selectedSegments.length === 0 && selectedIndividuals.length === 0) {
+      setAutoSelectBlockedSegmentIds([]);
+    }
+  }, [selectedSegments.length, selectedIndividuals.length]);
+
+  const autoSelectBlockedKey = useMemo(
+    () => [...autoSelectBlockedSegmentIds].sort().join(','),
+    [autoSelectBlockedSegmentIds],
+  );
+
+  // When every member of a segment appears in selectedIndividuals, auto-select that segment
+  // (including multiple segments at once, and cascades after picking a segment that implies others).
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      (async () => {
+        const indSet = new Set(selectedIndividuals);
+        const selectedSegSet = new Set(selectedSegments);
+        const autoBlock = new Set(autoSelectBlockedSegmentIds);
+        const candidates = audienceSegments.filter(
+          (s) => !selectedSegSet.has(s.id) && !autoBlock.has(s.id),
+        );
+        if (candidates.length === 0) return;
+
+        const results = await Promise.all(
+          candidates.map(async (s) => {
+            const ids = await ensureSegmentMemberIdsRef.current(s.id);
+            return { id: s.id, ids };
+          }),
+        );
+        if (cancelled) return;
+
+        const toAdd = results
+          .filter(({ ids }) => ids.length > 0 && ids.every((id) => indSet.has(id)))
+          .map((r) => r.id);
+
+        if (toAdd.length === 0) return;
+        const next = Array.from(new Set([...selectedSegments, ...toAdd]));
+        if (next.length === selectedSegments.length) return;
+        onSegmentsChange(next);
+      })();
+    }, 100);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [selectedIndividuals, audienceSegments, selectedSegments, onSegmentsChange, autoSelectBlockedKey]);
 
   const filteredSegments = useMemo(() => {
     if (!segmentSearch) return audienceSegments;
     return audienceSegments.filter((s) => s.name.toLowerCase().includes(segmentSearch.toLowerCase()));
   }, [segmentSearch, audienceSegments]);
 
+  const toCamelCase = (value: string) => value.replace(/_([a-z])/g, (_m, ch: string) => ch.toUpperCase());
+
   const getContactFieldValue = (contact: PersonSelectorProps['contacts'][number], fieldName: string) => {
     switch (fieldName) {
+      case 'full_name':
+        return `${contact.firstName || ''} ${contact.lastName || ''}`.trim();
       case 'first_name':
         return contact.firstName || '';
       case 'last_name':
@@ -116,7 +236,13 @@ export function PersonSelector({
       case 'current_city':
         return contact.currentCity || '';
       default:
-        return '';
+        const bag = contact as Record<string, unknown> & { attributes?: Record<string, unknown> };
+        return String(
+          bag[fieldName] ??
+          bag[toCamelCase(fieldName)] ??
+          bag.attributes?.[fieldName] ??
+          '',
+        );
     }
   };
 
@@ -171,18 +297,61 @@ export function PersonSelector({
     });
   }, [contacts, contactSearch, appliedFilters, filterByPhone]);
 
-  const toggleSegment = (segmentId: string) => {
-    const updated = selectedSegments.includes(segmentId)
+  const toggleSegment = async (segmentId: string) => {
+    const isSelected = selectedSegments.includes(segmentId);
+    const updatedSegments = isSelected
       ? selectedSegments.filter((id) => id !== segmentId)
       : [...selectedSegments, segmentId];
-    onSegmentsChange(updated);
+    onSegmentsChange(updatedSegments);
+
+    if (isSelected) {
+      setAutoSelectBlockedSegmentIds((prev) => (prev.includes(segmentId) ? prev : [...prev, segmentId]));
+      const memberIds = await ensureSegmentMemberIds(segmentId);
+      const memberSet = new Set(memberIds);
+      const otherSegmentIds = selectedSegments.filter((id) => id !== segmentId);
+      const mustKeep = new Set<string>();
+      for (const sid of otherSegmentIds) {
+        const ids = await ensureSegmentMemberIds(sid);
+        ids.forEach((id) => mustKeep.add(id));
+      }
+      const newIndividuals = selectedIndividuals.filter(
+        (id) => !memberSet.has(id) || mustKeep.has(id),
+      );
+      onIndividualsChange(newIndividuals);
+    } else {
+      setAutoSelectBlockedSegmentIds((prev) => prev.filter((id) => id !== segmentId));
+      const memberIds = await ensureSegmentMemberIds(segmentId);
+      const mergedIndividuals = Array.from(new Set([...selectedIndividuals, ...memberIds]));
+      onIndividualsChange(mergedIndividuals);
+    }
   };
 
-  const toggleIndividual = (contactId: string) => {
-    const updated = selectedIndividuals.includes(contactId)
-      ? selectedIndividuals.filter((id) => id !== contactId)
-      : [...selectedIndividuals, contactId];
-    onIndividualsChange(updated);
+  const toggleIndividual = async (contactId: string) => {
+    const isSelected = selectedIndividuals.includes(contactId);
+    if (!isSelected) {
+      onIndividualsChange([...selectedIndividuals, contactId]);
+      return;
+    }
+
+    const resolvedMemberMap: Record<string, string[]> = { ...segmentMemberMap };
+    const missingSegmentIds = selectedSegments.filter((segId) => !resolvedMemberMap[segId]);
+    if (missingSegmentIds.length > 0) {
+      const loaded = await Promise.all(missingSegmentIds.map((segId) => ensureSegmentMemberIds(segId)));
+      missingSegmentIds.forEach((segId, idx) => {
+        resolvedMemberMap[segId] = loaded[idx] || [];
+      });
+    }
+
+    const updatedIndividuals = selectedIndividuals.filter((id) => id !== contactId);
+    const segmentsToUnset = selectedSegments.filter((segId) => {
+      const ids = resolvedMemberMap[segId] || [];
+      return ids.includes(contactId);
+    });
+
+    if (segmentsToUnset.length > 0) {
+      onSegmentsChange(selectedSegments.filter((segId) => !segmentsToUnset.includes(segId)));
+    }
+    onIndividualsChange(updatedIndividuals);
   };
 
   const selectAllFiltered = () => {
@@ -338,7 +507,7 @@ export function PersonSelector({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__field__">Field</SelectItem>
-                          {selectorFilterFields.map((field) => (
+                          {availableFilterFields.map((field) => (
                             <SelectItem key={field.field_name} value={field.field_name}>
                               {field.display_name}
                             </SelectItem>

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Download, Upload, Eye, Trash2 } from 'lucide-react';
+import { Plus, Download, Upload, Eye, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Contact } from '@/types/contact';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -190,21 +191,13 @@ export default function ContactsPage() {
     setError(null);
     try {
       const token = localStorage.getItem('crm_token');
-      const payloadFilters = [...filters];
-      if (searchText.trim()) {
-        payloadFilters.push({
-          field_name: 'email',
-          op: 'contains',
-          value: searchText.trim(),
-        });
-      }
       const res = await fetch(`${API_BASE_URL}/contacts/search`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify(payloadFilters),
+        body: JSON.stringify(filters),
       });
       if (!res.ok) {
         throw new Error('Failed to search contacts');
@@ -223,6 +216,68 @@ export default function ContactsPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const query = searchText.trim();
+    const timeoutId = window.setTimeout(async () => {
+      if (!query) {
+        if (filters.length > 0) {
+          await applyFilters();
+        } else {
+          await fetchContactsPage(0, DEFAULT_PAGE_SIZE);
+        }
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      try {
+        const token = localStorage.getItem('crm_token');
+        const headers = {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        };
+        const payloads = [
+          [{ field_name: 'first_name', op: 'contains', value: query }],
+          [{ field_name: 'last_name', op: 'contains', value: query }],
+          [{ field_name: 'email', op: 'contains', value: query }],
+        ];
+        const responses = await Promise.all(
+          payloads.map((payload) =>
+            fetch(`${API_BASE_URL}/contacts/search`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(payload),
+            }),
+          ),
+        );
+        if (responses.some((res) => !res.ok)) {
+          throw new Error('Failed to search contacts');
+        }
+        const datasets = await Promise.all(responses.map((res) => res.json()));
+        const merged = new Map<string, any>();
+        datasets.forEach((data) => {
+          (data.contacts || []).forEach((contact: any) => {
+            merged.set(String(contact.contact_id), contact);
+          });
+        });
+        const mapped = mapContacts(Array.from(merged.values()));
+        setContacts(mapped);
+        setTotalContacts(mapped.length);
+        setPageOffset(0);
+        setPageLimit(mapped.length || DEFAULT_PAGE_SIZE);
+        setShowingAll(false);
+        setIsFilteredView(true);
+      } catch (e: any) {
+        setError(e.message ?? 'Failed to search contacts');
+      } finally {
+        setLoading(false);
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchText]);
 
   const resetFilters = async () => {
     setFilters([]);
@@ -382,7 +437,7 @@ export default function ContactsPage() {
         <div>
           <h1 className="text-2xl font-bold">Contacts</h1>
           <p className="text-muted-foreground">
-            Manage and connect with {contacts.length} contacts
+            Manage and connect with {totalContacts} contacts
             {user ? ` in ${user.name}'s organisation` : ''}
           </p>
         </div>
@@ -403,49 +458,57 @@ export default function ContactsPage() {
             <Upload className="h-4 w-4 mr-2" />
             {importUploading ? 'Importing…' : 'Import'}
           </Button>
-          <Button variant="outline" size="sm"><Download className="h-4 w-4 mr-2" />Export</Button>
+
           <Button size="sm" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />Add Contact
           </Button>
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-3 items-start">
+      <div className="rounded-xl border bg-card p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start">
         <Input
-          placeholder="Search by email..."
+          placeholder="Search by name or email..."
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           className="md:max-w-xs"
         />
         <div className="flex-1 space-y-2">
           {filters.map((f, idx) => (
-            <div key={idx} className="flex gap-2 items-center">
-              <select
-                className="border rounded px-2 py-1 text-sm"
-                value={f.field_name}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setFilters((prev) => prev.map((pf, i) => (i === idx ? { ...pf, field_name: v } : pf)));
+            <div key={idx} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Select
+                value={f.field_name || '__field__'}
+                onValueChange={(value) => {
+                  const normalized = value === '__field__' ? '' : value;
+                  setFilters((prev) => prev.map((pf, i) => (i === idx ? { ...pf, field_name: normalized } : pf)));
                 }}
               >
-                <option value="">Field</option>
-                {availableFields.map((af) => (
-                  <option key={af.field_name} value={af.field_name}>
-                    {af.display_name}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="border rounded px-2 py-1 text-sm"
+                <SelectTrigger className="w-full sm:w-[200px]">
+                  <SelectValue placeholder="Field" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__field__">Field</SelectItem>
+                  {availableFields.map((af) => (
+                    <SelectItem key={af.field_name} value={af.field_name}>
+                      {af.display_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
                 value={f.op}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setFilters((prev) => prev.map((pf, i) => (i === idx ? { ...pf, op: v } : pf)));
+                onValueChange={(value) => {
+                  setFilters((prev) => prev.map((pf, i) => (i === idx ? { ...pf, op: value } : pf)));
                 }}
               >
-                <option value="eq">Equals</option>
-                <option value="contains">Contains</option>
-              </select>
+                <SelectTrigger className="w-full sm:w-[140px]">
+                  <SelectValue placeholder="Operator" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="eq">Equals</SelectItem>
+                  <SelectItem value="contains">Contains</SelectItem>
+                </SelectContent>
+              </Select>
               <Input
                 placeholder="Value"
                 value={f.value}
@@ -453,13 +516,15 @@ export default function ContactsPage() {
                   const v = e.target.value;
                   setFilters((prev) => prev.map((pf, i) => (i === idx ? { ...pf, value: v } : pf)));
                 }}
+                className="sm:max-w-xs"
               />
               <Button
                 variant="ghost"
                 size="icon"
+                className="shrink-0"
                 onClick={() => setFilters((prev) => prev.filter((_, i) => i !== idx))}
               >
-                ×
+                <X className="h-4 w-4" />
               </Button>
             </div>
           ))}
@@ -479,6 +544,7 @@ export default function ContactsPage() {
             Apply
           </Button>
         </div>
+      </div>
       </div>
 
       {loading && (

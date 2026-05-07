@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from '@/hooks/use-toast';
 import { MessageTemplate, AudienceSegment } from '@/types/contact';
 import { SelectRecipientsDialog } from '@/components/dialogs/SelectRecipientsDialog';
+import { CampaignDetailDialog } from '@/components/dialogs/CampaignDetailDialog';
 import { ApiError, apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api';
 
 const aiCampaignSuggestions = [
@@ -51,6 +52,8 @@ export default function Communications() {
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiPreviewLoading, setAiPreviewLoading] = useState(false);
   const [showRecipientsDialog, setShowRecipientsDialog] = useState(false);
+  const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
+  const [showCampaignDetail, setShowCampaignDetail] = useState(false);
   const [recentCampaigns, setRecentCampaigns] = useState<Array<{ id: number; name: string; type: 'email' | 'whatsapp'; sent: number; opened: number; clicked: number; date: string }>>([]);
   const [segments, setSegments] = useState<Array<{ id: string; name: string; memberIds: string[]; memberCount: number }>>([]);
   const [contacts, setContacts] = useState<Array<{ id: string; firstName: string; lastName: string; email?: string; phone?: string; whatsapp?: string }>>([]);
@@ -147,10 +150,10 @@ export default function Communications() {
     const keyword = extractKeywordFromPrompt(prompt);
     const title = keyword
       ? keyword
-          .split(' ')
-          .filter(Boolean)
-          .map((w) => w[0]?.toUpperCase() + w.slice(1))
-          .join(' ')
+        .split(' ')
+        .filter(Boolean)
+        .map((w) => w[0]?.toUpperCase() + w.slice(1))
+        .join(' ')
       : 'Update';
 
     const subjectDraft = messageType === 'email' ? `${title} update` : `${title} update`;
@@ -809,8 +812,44 @@ export default function Communications() {
               </Card>
             </div>
             <div className="space-y-6">
-              <Card><CardHeader><CardTitle className="text-lg">Recent Campaigns</CardTitle></CardHeader><CardContent className="space-y-4">{recentCampaigns.map((c) => (<div key={c.id} className="p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer"><div className="flex items-start justify-between"><div className="flex items-center gap-2">{c.type === 'email' ? <Mail className="h-4 w-4 text-primary" /> : <MessageCircle className="h-4 w-4 text-success" />}<span className="font-medium text-sm">{c.name}</span></div></div><div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground"><span>{c.sent} sent</span><span>{c.sent > 0 ? Math.round((c.opened / c.sent) * 100) : 0}% opened</span></div></div>))}</CardContent></Card>
-              <Card><CardHeader><CardTitle className="text-lg">Quick Stats</CardTitle></CardHeader><CardContent className="space-y-4"><div className="flex justify-between items-center"><span className="text-sm text-muted-foreground">Emails This Month</span><span className="font-semibold">450</span></div><div className="flex justify-between items-center"><span className="text-sm text-muted-foreground">Avg Open Rate</span><span className="font-semibold text-success">78%</span></div><div className="flex justify-between items-center"><span className="text-sm text-muted-foreground">WhatsApp Messages</span><span className="font-semibold">295</span></div><div className="flex justify-between items-center"><span className="text-sm text-muted-foreground">Response Rate</span><span className="font-semibold">62%</span></div></CardContent></Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Recent Campaigns</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {recentCampaigns.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">No campaigns yet.</p>
+                  ) : (
+                    recentCampaigns.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCampaignId(c.id);
+                          setShowCampaignDetail(true);
+                        }}
+                        className="w-full p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer text-left focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {c.type === 'email' ? (
+                              <Mail className="h-4 w-4 text-primary shrink-0" />
+                            ) : (
+                              <MessageCircle className="h-4 w-4 text-success shrink-0" />
+                            )}
+                            <span className="font-medium text-sm truncate">{c.name}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                          <span>{c.sent} sent</span>
+                          <span>{c.sent > 0 ? Math.round((c.opened / c.sent) * 100) : 0}% opened</span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+              {/* <Card><CardHeader><CardTitle className="text-lg">Quick Stats</CardTitle></CardHeader><CardContent className="space-y-4"><div className="flex justify-between items-center"><span className="text-sm text-muted-foreground">Emails This Month</span><span className="font-semibold">450</span></div><div className="flex justify-between items-center"><span className="text-sm text-muted-foreground">Avg Open Rate</span><span className="font-semibold text-success">78%</span></div><div className="flex justify-between items-center"><span className="text-sm text-muted-foreground">WhatsApp Messages</span><span className="font-semibold">295</span></div><div className="flex justify-between items-center"><span className="text-sm text-muted-foreground">Response Rate</span><span className="font-semibold">62%</span></div></CardContent></Card> */}
             </div>
           </div>
         </TabsContent>
@@ -822,13 +861,13 @@ export default function Communications() {
               {templatesLoading ? (
                 <div className="py-10 text-center text-muted-foreground">Loading templates…</div>
               ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{currentTemplates.map((template) => (
-              <div key={template.id} className="p-4 rounded-lg border hover:shadow-sm transition-shadow">
-                <div className="flex items-start justify-between mb-3"><div className="flex items-center gap-2">{template.type === 'email' ? <Mail className="h-4 w-4 text-primary" /> : <MessageCircle className="h-4 w-4 text-success" />}<span className="font-medium">{template.name}</span></div><div className="flex items-center gap-1"><Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditTemplate(template)}><Edit2 className="h-4 w-4" /></Button><Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDeleteTemplate(template.id)}><Trash2 className="h-4 w-4" /></Button></div></div>
-                {template.subject && <p className="text-sm font-medium mb-1 truncate">Subject: {template.subject}</p>}<p className="text-sm text-muted-foreground line-clamp-3">{template.content}</p>
-                <Button variant="outline" size="sm" className="w-full mt-4" onClick={() => handleUseTemplate(template)}>Use Template</Button>
-              </div>
-            ))}</div>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{currentTemplates.map((template) => (
+                  <div key={template.id} className="p-4 rounded-lg border hover:shadow-sm transition-shadow">
+                    <div className="flex items-start justify-between mb-3"><div className="flex items-center gap-2">{template.type === 'email' ? <Mail className="h-4 w-4 text-primary" /> : <MessageCircle className="h-4 w-4 text-success" />}<span className="font-medium">{template.name}</span></div><div className="flex items-center gap-1"><Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditTemplate(template)}><Edit2 className="h-4 w-4" /></Button><Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDeleteTemplate(template.id)}><Trash2 className="h-4 w-4" /></Button></div></div>
+                    {template.subject && <p className="text-sm font-medium mb-1 truncate">Subject: {template.subject}</p>}<p className="text-sm text-muted-foreground line-clamp-3">{template.content}</p>
+                    <Button variant="outline" size="sm" className="w-full mt-4" onClick={() => handleUseTemplate(template)}>Use Template</Button>
+                  </div>
+                ))}</div>
               )}
             </CardContent>
           </Card>
@@ -865,6 +904,15 @@ export default function Communications() {
         }))}
         contacts={contacts}
         messageType={messageType}
+      />
+
+      <CampaignDetailDialog
+        campaignId={selectedCampaignId}
+        open={showCampaignDetail}
+        onOpenChange={(open) => {
+          setShowCampaignDetail(open);
+          if (!open) setSelectedCampaignId(null);
+        }}
       />
     </div>
   );

@@ -16,26 +16,16 @@ import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
 type UiContact = { id: string; firstName: string; lastName: string; email?: string; phone?: string; type?: string; department?: string; currentCity?: string; engagementLevel?: string; status?: string; photo?: string };
 type UiSegment = { id: string; name: string; description?: string; memberIds: string[]; memberCount: number; createdAt: string; updatedAt: string };
 
-const locationOptions = ['Bangalore', 'Mumbai', 'Kochi', 'Delhi', 'Chennai', 'Hyderabad', 'Pune', 'Kolkata', 'Palo Alto', 'San Francisco'];
-const departmentOptions = ['Technology', 'Analytics', 'Operations', 'R&D', 'Biotech', 'Sales', 'Marketing'];
-const typeOptions = [
-  { value: 'customer', label: 'Customer' },
-  { value: 'lead', label: 'Lead' },
-  { value: 'employee', label: 'Employee' },
-  { value: 'partner', label: 'Partner' },
-  { value: 'vendor', label: 'Vendor' },
-];
-const statusOptions = [
-  { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'Inactive' },
-  { value: 'lead', label: 'Lead' },
-  { value: 'pending', label: 'Pending' },
-];
-const engagementOptions = [
-  { value: 'high', label: 'High' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'low', label: 'Low' },
-  { value: 'none', label: 'None' },
+const segmentFilterFields = [
+  { field_name: 'first_name', display_name: 'First Name' },
+  { field_name: 'last_name', display_name: 'Last Name' },
+  { field_name: 'email', display_name: 'Email' },
+  { field_name: 'phone', display_name: 'Phone' },
+  { field_name: 'current_city', display_name: 'Location' },
+  { field_name: 'department', display_name: 'Department' },
+  { field_name: 'type', display_name: 'Type' },
+  { field_name: 'status', display_name: 'Status' },
+  { field_name: 'engagement_level', display_name: 'Engagement' },
 ];
 
 const aiSegmentSuggestions = [
@@ -43,6 +33,8 @@ const aiSegmentSuggestions = [
   'Find contacts in Bangalore whose job title mentions marketing',
   'Segment employees with job titles related to technology and high engagement',
 ];
+
+const normalize = (value?: string | null) => (value || '').trim().toLowerCase();
 
 export default function AudienceSegments() {
   const { toast } = useToast();
@@ -61,11 +53,8 @@ export default function AudienceSegments() {
   const [aiPreviewLoading, setAiPreviewLoading] = useState(false);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [contactSearch, setContactSearch] = useState('');
-  const [filterLocation, setFilterLocation] = useState('all');
-  const [filterDepartment, setFilterDepartment] = useState('all');
-  const [filterType, setFilterType] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [filterEngagement, setFilterEngagement] = useState('all');
+  const [filters, setFilters] = useState<{ field_name: string; op: string; value: string }[]>([]);
+  const [appliedFilters, setAppliedFilters] = useState<{ field_name: string; op: string; value: string }[]>([]);
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
@@ -126,20 +115,23 @@ export default function AudienceSegments() {
       }));
       setSegments(mappedSegments);
 
-      const mappedContacts: UiContact[] = (allContacts || []).map((c: any) => ({
+      const mappedContacts: UiContact[] = (allContacts || []).map((c: any) => {
+        const attrs = c.attributes || {};
+        return {
         id: String(c.contact_id),
         firstName: c.first_name,
         lastName: c.last_name,
         email: c.email || undefined,
         phone: c.phone || undefined,
         // optional fields not present in backend contact core schema today
-        type: c.type || undefined,
-        department: c.department || undefined,
-        currentCity: c.current_city || undefined,
-        engagementLevel: c.engagement_level || undefined,
-        status: c.status || undefined,
+        type: c.type || attrs.type || attrs.contact_type || undefined,
+        department: c.department || attrs.department || undefined,
+        currentCity: c.current_city || attrs.current_city || attrs.city || attrs.location || undefined,
+        engagementLevel: c.engagement_level || attrs.engagement_level || attrs.engagement || undefined,
+        status: c.status || attrs.status || undefined,
         photo: c.photo || undefined,
-      }));
+      };
+    });
       setContacts(mappedContacts);
     } catch (e: any) {
       toast({ title: 'Failed to load segments', description: e?.message ?? 'Unknown error', variant: 'destructive' });
@@ -161,29 +153,57 @@ export default function AudienceSegments() {
     setAiQueryPlan(null);
     setSelectedMemberIds([]);
     setContactSearch('');
-    setFilterLocation('all');
-    setFilterDepartment('all');
-    setFilterType('all');
-    setFilterStatus('all');
-    setFilterEngagement('all');
+    setFilters([]);
+    setAppliedFilters([]);
     setEditingSegment(null);
+  };
+
+  const getContactFieldValue = (contact: UiContact, fieldName: string) => {
+    switch (fieldName) {
+      case 'first_name':
+        return contact.firstName || '';
+      case 'last_name':
+        return contact.lastName || '';
+      case 'email':
+        return contact.email || '';
+      case 'phone':
+        return contact.phone || '';
+      case 'current_city':
+        return contact.currentCity || '';
+      case 'department':
+        return contact.department || '';
+      case 'type':
+        return contact.type || '';
+      case 'status':
+        return contact.status || '';
+      case 'engagement_level':
+        return contact.engagementLevel || '';
+      default:
+        return '';
+    }
   };
 
   const filteredContacts = useMemo(() => {
     return contacts.filter((c) => {
-      const matchesSearch = contactSearch === '' || `${c.firstName} ${c.lastName} ${c.email || ''} ${c.department || ''}`.toLowerCase().includes(contactSearch.toLowerCase());
-      const matchesLocation = filterLocation === 'all' || (c.currentCity || '').toLowerCase().includes(filterLocation.toLowerCase());
-      const matchesDepartment = filterDepartment === 'all' || c.department === filterDepartment;
-      const matchesType = filterType === 'all' || c.type === filterType;
-      const matchesStatus = filterStatus === 'all' || c.status === filterStatus;
-      const matchesEngagement = filterEngagement === 'all' || c.engagementLevel === filterEngagement;
-      return matchesSearch && matchesLocation && matchesDepartment && matchesType && matchesStatus && matchesEngagement;
+      const normalizedSearch = contactSearch.trim().toLowerCase();
+      const fullName = `${c.firstName || ''} ${c.lastName || ''}`.trim().toLowerCase();
+      const email = (c.email || '').toLowerCase();
+      const matchesSearch =
+        normalizedSearch === '' || fullName.includes(normalizedSearch) || email.includes(normalizedSearch);
+      const matchesAppliedFilters = appliedFilters.every((filter) => {
+        const contactValue = normalize(getContactFieldValue(c, filter.field_name));
+        const filterValue = normalize(filter.value);
+        if (!filterValue) return true;
+        if (filter.op === 'eq') return contactValue === filterValue;
+        return contactValue.includes(filterValue);
+      });
+      return matchesSearch && matchesAppliedFilters;
     });
-  }, [contacts, contactSearch, filterLocation, filterDepartment, filterType, filterStatus, filterEngagement]);
+  }, [contacts, contactSearch, appliedFilters]);
 
   const filteredSegments = segments.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const getSegmentMembers = (memberIds: string[]) => contacts.filter((c) => memberIds.includes(c.id));
-  const activeFiltersCount = [filterLocation, filterDepartment, filterType, filterStatus, filterEngagement].filter((f) => f !== 'all').length;
+  const activeFiltersCount = appliedFilters.length;
 
   const toggleMember = (id: string) => setSelectedMemberIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
   const selectAll = () => {
@@ -196,11 +216,12 @@ export default function AudienceSegments() {
   };
   const clearFilters = () => {
     setContactSearch('');
-    setFilterLocation('all');
-    setFilterDepartment('all');
-    setFilterType('all');
-    setFilterStatus('all');
-    setFilterEngagement('all');
+    setFilters([]);
+    setAppliedFilters([]);
+  };
+  const applyFilters = () => {
+    const validFilters = filters.filter((f) => f.field_name && f.value.trim());
+    setAppliedFilters(validFilters);
   };
 
   const prefillSegmentMetaFromPrompt = (prompt: string): { name: string; description: string } => {
@@ -503,17 +524,81 @@ export default function AudienceSegments() {
               </aside>
 
               <div className="flex min-h-0 flex-col p-5">
-                <div className="mb-4 flex flex-wrap gap-2 shrink-0">
+                <div className="mb-4 space-y-2 shrink-0">
                   <div className="relative min-w-[240px] flex-1">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input placeholder="Search contacts..." value={contactSearch} onChange={(e) => setContactSearch(e.target.value)} className="pl-9" />
+                    <Input placeholder="Search by name or email..." value={contactSearch} onChange={(e) => setContactSearch(e.target.value)} className="pl-9" />
                   </div>
-                  <Select value={filterLocation} onValueChange={setFilterLocation}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Location" /></SelectTrigger><SelectContent><SelectItem value="all">All Locations</SelectItem>{locationOptions.map((loc) => <SelectItem key={loc} value={loc}>{loc}</SelectItem>)}</SelectContent></Select>
-                  <Select value={filterDepartment} onValueChange={setFilterDepartment}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Department" /></SelectTrigger><SelectContent><SelectItem value="all">All Departments</SelectItem>{departmentOptions.map((dept) => <SelectItem key={dept} value={dept}>{dept}</SelectItem>)}</SelectContent></Select>
-                  <Select value={filterType} onValueChange={setFilterType}><SelectTrigger className="w-[120px]"><SelectValue placeholder="Type" /></SelectTrigger><SelectContent><SelectItem value="all">All Types</SelectItem>{typeOptions.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}</SelectContent></Select>
-                  <Select value={filterStatus} onValueChange={setFilterStatus}><SelectTrigger className="w-[120px]"><SelectValue placeholder="Status" /></SelectTrigger><SelectContent><SelectItem value="all">All Status</SelectItem>{statusOptions.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent></Select>
-                  <Select value={filterEngagement} onValueChange={setFilterEngagement}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Engagement" /></SelectTrigger><SelectContent><SelectItem value="all">All Engagement</SelectItem>{engagementOptions.map((eng) => <SelectItem key={eng.value} value={eng.value}>{eng.label}</SelectItem>)}</SelectContent></Select>
-                  {activeFiltersCount > 0 && <Button variant="ghost" size="sm" onClick={clearFilters}><X className="mr-1 h-4 w-4" />Clear ({activeFiltersCount})</Button>}
+                  {filters.map((f, idx) => (
+                    <div key={idx} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Select
+                        value={f.field_name || '__field__'}
+                        onValueChange={(value) => {
+                          const normalizedValue = value === '__field__' ? '' : value;
+                          setFilters((prev) => prev.map((pf, i) => (i === idx ? { ...pf, field_name: normalizedValue } : pf)));
+                        }}
+                      >
+                        <SelectTrigger className="w-full sm:w-[200px]">
+                          <SelectValue placeholder="Field" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__field__">Field</SelectItem>
+                          {segmentFilterFields.map((field) => (
+                            <SelectItem key={field.field_name} value={field.field_name}>
+                              {field.display_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={f.op}
+                        onValueChange={(value) => {
+                          setFilters((prev) => prev.map((pf, i) => (i === idx ? { ...pf, op: value } : pf)));
+                        }}
+                      >
+                        <SelectTrigger className="w-full sm:w-[140px]">
+                          <SelectValue placeholder="Operator" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="eq">Equals</SelectItem>
+                          <SelectItem value="contains">Contains</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        placeholder="Value"
+                        value={f.value}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setFilters((prev) => prev.map((pf, i) => (i === idx ? { ...pf, value } : pf)));
+                        }}
+                        className="sm:max-w-xs"
+                      />
+                      <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setFilters((prev) => prev.filter((_, i) => i !== idx))}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setFilters((prev) => [...prev, { field_name: '', op: 'eq', value: '' }])}
+                    >
+                      + Add filter
+                    </Button>
+                    {filters.length > 0 && (
+                      <Button variant="outline" size="sm" onClick={applyFilters}>
+                        Apply filters
+                      </Button>
+                    )}
+                    {(activeFiltersCount > 0 || filters.length > 0 || contactSearch.trim()) && (
+                      <Button variant="ghost" size="sm" onClick={clearFilters}>
+                        <X className="mr-1 h-4 w-4" />
+                        Clear
+                        {activeFiltersCount > 0 ? ` (${activeFiltersCount})` : ''}
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mb-3 flex items-center justify-between shrink-0">
@@ -632,7 +717,19 @@ export default function AudienceSegments() {
             <div key={c.id} className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 shrink-0">{c.photo ? <img src={c.photo} alt={`${c.firstName} ${c.lastName}`} className="h-10 w-10 rounded-full object-cover" /> : <span className="text-sm font-medium">{c.firstName[0]}{c.lastName[0]}</span>}</div>
               <div className="min-w-0 flex-1"><p className="truncate font-medium">{c.firstName} {c.lastName}</p><p className="truncate text-sm text-muted-foreground">{c.email}</p></div>
-              <div className="flex items-center gap-2 shrink-0"><Badge variant="outline" className="capitalize">{c.type}</Badge><span className="text-xs text-muted-foreground">{c.phone}</span></div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Badge variant="outline" className="capitalize">{c.type}</Badge>
+                <span className="text-xs text-muted-foreground">{c.phone}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleViewContact(c.id)}
+                >
+                  <Eye className="mr-2 h-4 w-4" />
+                  View
+                </Button>
+              </div>
             </div>
           ))}</div></ScrollArea>
           <div className="flex justify-end gap-3 border-t p-6 pt-4 shrink-0"><Button variant="outline" onClick={() => setShowPreviewDialog(false)}>Close</Button><Button onClick={() => { handleEdit(previewSegment!); setShowPreviewDialog(false); }}><Edit2 className="mr-2 h-4 w-4" />Edit Segment</Button></div>

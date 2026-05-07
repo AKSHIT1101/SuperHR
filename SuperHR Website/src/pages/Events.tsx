@@ -372,8 +372,8 @@ export default function Events() {
         action === 'invite'
           ? contacts.map((c: any) => String(c.contact_id))
           : contacts
-              .filter((c: any) => c?.email_invite_sent === true || c?.whatsapp_invite_sent === true)
-              .map((c: any) => String(c.contact_id));
+            .filter((c: any) => c?.email_invite_sent === true || c?.whatsapp_invite_sent === true)
+            .map((c: any) => String(c.contact_id));
 
       const ev = data?.event;
       const eventWhen =
@@ -482,7 +482,6 @@ export default function Events() {
       <div className="flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input placeholder="Search events..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9" /></div>
         <Select value={filters.type} onValueChange={(v) => setFilters((f) => ({ ...f, type: v }))}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Event Type" /></SelectTrigger><SelectContent><SelectItem value="all">All Types</SelectItem><SelectItem value="conference">Conference</SelectItem><SelectItem value="webinar">Webinar</SelectItem><SelectItem value="meetup">Meetup</SelectItem><SelectItem value="workshop">Workshop</SelectItem><SelectItem value="networking">Networking</SelectItem><SelectItem value="training">Training</SelectItem></SelectContent></Select>
-        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}><SheetTrigger asChild><Button variant="outline" size="icon" className="relative"><Filter className="h-4 w-4" />{activeFiltersCount > 0 && <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">{activeFiltersCount}</span>}</Button></SheetTrigger><SheetContent><SheetHeader><SheetTitle>Filter Events</SheetTitle><SheetDescription>Narrow down events</SheetDescription></SheetHeader><div className="mt-6 space-y-6"><div className="space-y-2"><Label>Location</Label><Select value={filters.location} onValueChange={(v) => setFilters((f) => ({ ...f, location: v }))}><SelectTrigger><SelectValue placeholder="All Locations" /></SelectTrigger><SelectContent><SelectItem value="all">All Locations</SelectItem><SelectItem value="bangalore">Bangalore</SelectItem><SelectItem value="mumbai">Mumbai</SelectItem><SelectItem value="zoom">Zoom (Virtual)</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>Format</Label><Select value={filters.isVirtual} onValueChange={(v) => setFilters((f) => ({ ...f, isVirtual: v }))}><SelectTrigger><SelectValue placeholder="All Formats" /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="virtual">Virtual</SelectItem><SelectItem value="in-person">In-Person</SelectItem></SelectContent></Select></div><Separator /><Button variant="outline" className="w-full" onClick={() => { clearFilters(); setSheetOpen(false); }}>Clear All Filters</Button></div></SheetContent></Sheet>
       </div>
 
       {viewMode === 'list' ? (

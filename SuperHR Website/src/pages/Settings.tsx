@@ -68,7 +68,7 @@ export default function Settings() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4"><div><h1 className="text-2xl font-bold">Settings</h1><p className="text-muted-foreground">Manage your account and application preferences</p></div><Button onClick={handleSave}><Save className="h-4 w-4 mr-2" />Save Changes</Button></div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4"><div><h1 className="text-2xl font-bold">Settings</h1><p className="text-muted-foreground">Manage your account and application preferences</p></div></div>
 
       <Tabs defaultValue="security" className="space-y-6">
         <TabsList>

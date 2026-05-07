@@ -105,6 +105,12 @@ No filter UIs. No template editors. No mail-merge tutorials. Just sentences.
 
 ### 1. Dynamic Schema Setup (Prompt-Driven)
 
+<p align="center">
+  <img src="docs/screenshots/schema-setup.png" alt="Schema setup screen" width="800" />
+  <br/>
+  <em>Screenshot — the <code>/schema-setup</code> page after entering a prompt and seeing the LLM-proposed field list.</em>
+</p>
+
 Each organization defines its own contact schema *in English*. The LLM converts that prompt into a typed list of fields (`text`, `number`, `date`, `boolean`), each optionally flagged for vector embedding so it becomes semantically searchable.
 
 - **`POST /schema/build`** — Prompt → suggested fields (review-then-save)
@@ -113,6 +119,12 @@ Each organization defines its own contact schema *in English*. The LLM converts 
 - **`POST /schema/complete-setup`** — Mark org as ready to use the rest of the app
 
 ### 2. Smart CSV / Excel Import (Two-Step, AI-Mapped)
+
+<p align="center">
+  <img src="docs/screenshots/csv-import.png" alt="CSV import column mapping" width="800" />
+  <br/>
+  <em>Screenshot — the import dialog showing LLM-suggested column → field mappings with confidence and unmapped columns.</em>
+</p>
 
 You don't have to rename your columns. Drop in any CSV/Excel and the importer:
 
@@ -123,12 +135,26 @@ The LLM also rejects files that obviously aren't contact data ("This appears to 
 
 ### 3. Contacts
 
+<p align="center">
+  <img src="docs/screenshots/contacts.png" alt="Contacts table" width="800" />
+  <br/>
+  <em>Screenshot — the <code>/contacts</code> page with the table, filters panel, and a contact detail drawer open.</em>
+</p>
+
 Standard CRUD plus a powerful **filter API** that combines structured filters across both core fields (`first_name`, `last_name`, `email`, `phone`) and any custom attribute defined for the org.
 
 - **`POST /contacts/search`** — Mix `eq`, `contains`, `gt/lt/gte/lte`, `between` across any field
 - **`POST /contacts/prompt`** — Run natural-language operations against contacts (validated against the contacts context to prevent prompt drift)
 
 ### 4. Audience Segments (Semantic + Structured)
+
+<p align="center">
+  <img src="docs/screenshots/segments-prompt.png" alt="Segment prompt input" width="420" />
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/segments-preview.png" alt="Segment preview with matched contacts" width="420" />
+  <br/>
+  <em>Screenshots — left: the prompt input on <code>/segments</code>; right: the LLM-proposed audience preview before saving.</em>
+</p>
 
 Segments are **reusable, prompt-built audience definitions**.
 
@@ -149,6 +175,12 @@ The user reviews the matches, edits the list, names the segment, and `POST /segm
 
 ### 5. Events
 
+<p align="center">
+  <img src="docs/screenshots/events.png" alt="Events page with AI-drafted event" width="800" />
+  <br/>
+  <em>Screenshot — the Create Event dialog showing AI-drafted name + description and the auto-selected invite list.</em>
+</p>
+
 Events follow the same propose-then-approve pattern.
 
 - **`POST /events/preview`** — Drafts the event (`compose_event_draft`) and pre-selects invitees by combining a semantic search over **existing segments and events** with a fresh contact query plan.
@@ -157,6 +189,12 @@ Events follow the same propose-then-approve pattern.
 - **`PATCH /events/{id}/invite-sent`** — Track per-channel send state.
 
 ### 6. Communications & Campaigns (Email + WhatsApp)
+
+<p align="center">
+  <img src="docs/screenshots/campaigns-compose.png" alt="Campaign composer with generated email" width="800" />
+  <br/>
+  <em>Screenshot — the campaign builder showing the prompt, AI-generated subject + body with merge tags, and the recipient preview list.</em>
+</p>
 
 The campaigns module is the most powerful AI surface in the app.
 
@@ -173,9 +211,21 @@ Sender, reply-to, and per-recipient personalization are all wired in. Campaigns 
 
 ### 7. Templates
 
+<p align="center">
+  <img src="docs/screenshots/templates.png" alt="Templates editor" width="800" />
+  <br/>
+  <em>Screenshot — the template editor with merge-tag hints visible.</em>
+</p>
+
 Reusable email & WhatsApp templates with **strict merge-placeholder validation**. You can't save a template that references a field your org doesn't have — the API returns clear hints listing every valid token.
 
 ### 8. Reminders (AI-Drafted)
+
+<p align="center">
+  <img src="docs/screenshots/reminders.png" alt="Reminders page with AI draft" width="800" />
+  <br/>
+  <em>Screenshot — the Reminders page with the AI-drafted reminder preview before saving.</em>
+</p>
 
 - **`POST /reminders/preview`** — *"Remind me next Tuesday at 10am to check on the Q2 outreach numbers"* → drafts a title, description, and due date.
 - **`POST /reminders/`** — Self-assign or assign to a teammate (validated to be in the same org).
@@ -183,11 +233,23 @@ Reusable email & WhatsApp templates with **strict merge-placeholder validation**
 
 ### 9. Analytics
 
+<p align="center">
+  <img src="docs/screenshots/analytics.png" alt="Analytics dashboard" width="800" />
+  <br/>
+  <em>Screenshot — the Analytics page with overview cards and at least one time-series chart.</em>
+</p>
+
 - **`GET /analytics/overview`** — Org-level snapshot (contacts, campaigns, events, opens, clicks, etc.) scoped to the user.
 - **`GET /analytics/timeseries`** — Time-bucketed series for any of:
   `contacts_created`, `campaigns_created`, `campaigns_sent`, `events_created`, `reminders_created`, `messages_sent`, `emails_sent`, `whatsapp_sent`, `messages_opened`, `messages_clicked` — bucketed by `day`, `week`, or `month`, over up to 365 days.
 
 ### 10. Users, Roles & Multi-Tenancy
+
+<p align="center">
+  <img src="docs/screenshots/users-roles.png" alt="Users and Roles page" width="800" />
+  <br/>
+  <em>Screenshot — the Users &amp; Roles admin page showing the team list, role badges, and the invite dialog.</em>
+</p>
 
 Every row is org-scoped. Three roles:
 
@@ -397,9 +459,36 @@ SuperHR Project/
 │   └── package.json
 │
 ├── Frontend Backup/                 Snapshot of an earlier UI iteration
+├── docs/
+│   └── screenshots/                 PNGs referenced from this README
 ├── README.md                        ← you are here
 └── Backend.md                       Legacy backend doc (see this README instead)
 ```
+
+> The screenshots embedded throughout this README are loaded from
+> `docs/screenshots/*.png`. Drop the matching files into that folder and
+> they'll render automatically on GitHub. The exact filenames each section
+> expects are listed in the table below.
+
+### Screenshot Checklist
+
+| File path | Where it shows | What to capture |
+|---|---|---|
+| `docs/screenshots/schema-setup.png` | Feature 1 — Schema Setup | `/schema-setup` after entering a prompt and seeing proposed fields |
+| `docs/screenshots/csv-import.png` | Feature 2 — CSV Import | Import dialog with LLM-suggested column mappings + confidence |
+| `docs/screenshots/contacts.png` | Feature 3 — Contacts | `/contacts` table with filters and a contact detail open |
+| `docs/screenshots/segments-prompt.png` | Feature 4 — Segments (left) | Empty segment prompt input |
+| `docs/screenshots/segments-preview.png` | Feature 4 — Segments (right) | Pre-selected contacts after running the prompt |
+| `docs/screenshots/events.png` | Feature 5 — Events | Create Event dialog with AI-drafted name + invite list |
+| `docs/screenshots/campaigns-compose.png` | Feature 6 — Campaigns | Campaign composer with AI-generated subject + body and recipient preview |
+| `docs/screenshots/templates.png` | Feature 7 — Templates | Template editor with merge-tag hints visible |
+| `docs/screenshots/reminders.png` | Feature 8 — Reminders | Reminders page with AI-drafted reminder preview |
+| `docs/screenshots/analytics.png` | Feature 9 — Analytics | Overview cards + at least one time-series chart |
+| `docs/screenshots/users-roles.png` | Feature 10 — Users & Roles | Team list with role badges + invite dialog |
+| `docs/screenshots/auth-login.png` | Getting Started (left) | `/auth` Google sign-in screen |
+| `docs/screenshots/dashboard.png` | Getting Started (right) | Dashboard immediately after login |
+
+PNG is recommended for crisp UI shots; a short MP4/GIF works too for the `end-to-end-flow` image — just rename it accordingly and tweak the `<img src=>` in the README.
 
 ---
 
@@ -413,6 +502,14 @@ SuperHR Project/
 - A **Groq API key** ([console.groq.com](https://console.groq.com/keys))
 - A **Google OAuth 2.0 Client** with redirect URI `http://localhost:8001/auth/google/callback`
 - A **Brevo account** ([brevo.com](https://www.brevo.com)) with a verified sender — only needed for real email sending
+
+<p align="center">
+  <img src="docs/screenshots/auth-login.png" alt="Sign in with Google screen" width="380" />
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/dashboard.png" alt="Dashboard after login" width="380" />
+  <br/>
+  <em>Screenshots — left: the Google sign-in screen at <code>/auth</code>; right: the Dashboard right after login.</em>
+</p>
 
 ### 1. Database
 

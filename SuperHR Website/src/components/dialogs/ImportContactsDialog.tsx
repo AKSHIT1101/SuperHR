@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 
 const IGNORE_VALUE = '__ignore__';
@@ -205,21 +205,21 @@ export function ImportContactsDialog(props: {
               </div>
             </div>
 
-            <div className="flex min-h-0 flex-col p-4">
-              <div className="flex items-center justify-between gap-3">
+            <div className="flex h-full min-h-0 flex-col p-4">
+              <div className="flex shrink-0 items-center justify-between gap-3">
                 <div>
                   <h3 className="font-semibold">Sample preview</h3>
                   <p className="text-sm text-muted-foreground">How your file columns look (first rows).</p>
                 </div>
                 <Badge variant="outline">{sampleRows.length} sample rows</Badge>
               </div>
-              <div className="mt-3 flex min-h-0 flex-1 flex-col rounded-lg border bg-card overflow-hidden">
-                <ScrollArea className="min-h-0 flex-1">
-                  <Table>
+              <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
+                <div className="min-h-0 flex-1 overflow-auto">
+                  <table className="w-max min-w-full caption-bottom text-sm">
                     <TableHeader>
                       <TableRow>
                         {columns.map((c) => (
-                          <TableHead key={c} className="max-w-[160px]">
+                          <TableHead key={c} className="min-w-[120px] max-w-[240px] whitespace-normal break-words">
                             {c}
                           </TableHead>
                         ))}
@@ -229,15 +229,18 @@ export function ImportContactsDialog(props: {
                       {sampleRows.map((r, idx) => (
                         <TableRow key={idx}>
                           {columns.map((c) => (
-                            <TableCell key={c} className="max-w-[160px] truncate">
+                            <TableCell
+                              key={c}
+                              className="min-w-[120px] max-w-[240px] align-top break-words [overflow-wrap:anywhere]"
+                            >
                               {String(r[c] ?? '')}
                             </TableCell>
                           ))}
                         </TableRow>
                       ))}
                     </TableBody>
-                  </Table>
-                </ScrollArea>
+                  </table>
+                </div>
               </div>
             </div>
           </div>

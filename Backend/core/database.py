@@ -1647,6 +1647,28 @@ class DatabaseManager:
             fetch="all",
         )
 
+        message_totals_row = self.execute_query(
+            """
+            SELECT
+              COALESCE(SUM(sent_count), 0) AS messages_sent,
+              COALESCE(SUM(open_count), 0) AS messages_opened,
+              COALESCE(SUM(click_count), 0) AS messages_clicked,
+              COALESCE(SUM(CASE WHEN channel = 'email' THEN sent_count ELSE 0 END), 0) AS emails_sent,
+              COALESCE(SUM(CASE WHEN channel = 'whatsapp' THEN sent_count ELSE 0 END), 0) AS whatsapp_sent
+            FROM campaigns
+            WHERE org_id = %s
+              AND sent_at IS NOT NULL
+            """,
+            (org_id,),
+            fetch="one",
+        ) or {
+            "messages_sent": 0,
+            "messages_opened": 0,
+            "messages_clicked": 0,
+            "emails_sent": 0,
+            "whatsapp_sent": 0,
+        }
+
         return {
             "contacts": contacts,
             "segments": segments,
@@ -1657,6 +1679,11 @@ class DatabaseManager:
             "reminders_open": reminders_open,
             "campaigns_by_channel": campaigns_by_channel,
             "campaigns_by_status": campaigns_by_status,
+            "messages_sent": int(message_totals_row.get("messages_sent") or 0),
+            "messages_opened": int(message_totals_row.get("messages_opened") or 0),
+            "messages_clicked": int(message_totals_row.get("messages_clicked") or 0),
+            "emails_sent": int(message_totals_row.get("emails_sent") or 0),
+            "whatsapp_sent": int(message_totals_row.get("whatsapp_sent") or 0),
         }
 
     def get_timeseries(
@@ -1670,30 +1697,60 @@ class DatabaseManager:
         if bucket not in ("day", "week", "month"):
             raise ValueError("bucket must be day|week|month")
 
-        if metric == "contacts_created":
-            table = "contacts"
-            col = "created_at"
-            extra_where = ""
-        elif metric == "campaigns_sent":
-            table = "campaigns"
-            col = "sent_at"
-            extra_where = "AND sent_at IS NOT NULL"
-        elif metric == "events_created":
-            table = "events"
-            col = "created_at"
-            extra_where = ""
-        elif metric == "reminders_created":
-            table = "reminders"
-            col = "created_at"
-            extra_where = ""
-        else:
+        # (table, time-column, aggregate-expression, additional-where)
+        metric_config = {
+            "contacts_created": ("contacts", "created_at", "COUNT(*)", ""),
+            "campaigns_created": ("campaigns", "created_at", "COUNT(*)", ""),
+            "campaigns_sent": (
+                "campaigns",
+                "sent_at",
+                "COUNT(*)",
+                "AND sent_at IS NOT NULL",
+            ),
+            "events_created": ("events", "created_at", "COUNT(*)", ""),
+            "reminders_created": ("reminders", "created_at", "COUNT(*)", ""),
+            "messages_sent": (
+                "campaigns",
+                "sent_at",
+                "COALESCE(SUM(sent_count), 0)",
+                "AND sent_at IS NOT NULL",
+            ),
+            "emails_sent": (
+                "campaigns",
+                "sent_at",
+                "COALESCE(SUM(sent_count), 0)",
+                "AND sent_at IS NOT NULL AND channel = 'email'",
+            ),
+            "whatsapp_sent": (
+                "campaigns",
+                "sent_at",
+                "COALESCE(SUM(sent_count), 0)",
+                "AND sent_at IS NOT NULL AND channel = 'whatsapp'",
+            ),
+            "messages_opened": (
+                "campaigns",
+                "sent_at",
+                "COALESCE(SUM(open_count), 0)",
+                "AND sent_at IS NOT NULL",
+            ),
+            "messages_clicked": (
+                "campaigns",
+                "sent_at",
+                "COALESCE(SUM(click_count), 0)",
+                "AND sent_at IS NOT NULL",
+            ),
+        }
+
+        if metric not in metric_config:
             raise ValueError("unsupported metric")
+
+        table, col, agg, extra_where = metric_config[metric]
 
         return self.execute_query(
             f"""
             SELECT
               date_trunc(%s, {col}) AS bucket,
-              COUNT(*) AS value
+              {agg} AS value
             FROM {table}
             WHERE org_id = %s
               AND {col} >= %s

@@ -18,7 +18,14 @@ def overview(
 
 @router.get("/timeseries", summary="Time series analytics")
 def timeseries(
-    metric: str = Query(..., description="contacts_created|campaigns_sent|events_created|reminders_created"),
+    metric: str = Query(
+        ...,
+        description=(
+            "contacts_created|campaigns_created|campaigns_sent|events_created|"
+            "reminders_created|messages_sent|emails_sent|whatsapp_sent|"
+            "messages_opened|messages_clicked"
+        ),
+    ),
     bucket: str = Query("day", description="day|week|month"),
     days: int = Query(90, ge=1, le=365),
     db: DatabaseManager = Depends(get_db),

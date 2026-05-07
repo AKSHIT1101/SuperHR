@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Union
 
 from core.database import DatabaseManager
 from core.dependencies import get_db, get_current_user, require_admin
@@ -48,6 +48,11 @@ class FilterCondition(BaseModel):
     field_name: str
     op: str = "eq"
     value: Any
+
+
+class ContactSearchRequest(BaseModel):
+    filters: List[FilterCondition] = []
+    logic: str = "AND"
 
 
 # ------------------------------------------------------------------ #
@@ -185,14 +190,24 @@ def get_filters(
 
 @router.post("/search", summary="Search contacts with dynamic filters")
 def search_contacts(
-    filters: List[FilterCondition],
+    body: Union[List[FilterCondition], ContactSearchRequest],
     db: DatabaseManager = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id        = current_user["org_id"]
-    exact_filters = [f.dict() for f in filters]
-    contacts      = db.run_contact_filter_query(org_id=org_id, contact_ids=None, exact_filters=exact_filters)
-    enriched      = [_enrich_contact(c, db) for c in contacts]
+    org_id = current_user["org_id"]
+    if isinstance(body, list):
+        exact_filters = [f.dict() for f in body]
+        exact_logic = "AND"
+    else:
+        exact_filters = [f.dict() for f in (body.filters or [])]
+        exact_logic = (body.logic or "AND").upper()
+    contacts = db.run_contact_filter_query(
+        org_id=org_id,
+        contact_ids=None,
+        exact_filters=exact_filters,
+        exact_logic=exact_logic,
+    )
+    enriched = [_enrich_contact({**c, "org_id": org_id}, db) for c in contacts]
     return {"total": len(enriched), "contacts": enriched}
 
 

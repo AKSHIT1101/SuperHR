@@ -210,7 +210,6 @@ export default function Settings() {
                   </div>
                 </div>
               </div>
-              <div className="space-y-2"><Label>Change Password</Label><div className="space-y-3"><Input type="password" placeholder="Current password" /><Input type="password" placeholder="New password" /><Input type="password" placeholder="Confirm new password" /><Button variant="outline">Update Password</Button></div></div>
             </CardContent>
           </Card>
         </TabsContent>

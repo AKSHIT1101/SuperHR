@@ -30,7 +30,9 @@ export default function Auth() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground font-bold text-xl mb-4">PC</div>
+          <div className="mx-auto h-20 w-20 flex items-center justify-center overflow-hidden mb-4 rounded-2xl border border-border bg-background shadow-sm">
+            <img src="/logo.svg" alt="Prompt CRM" className="h-20 w-20 object-contain scale-[1.6]" />
+          </div>
           <h1 className="text-2xl font-bold">Prompt CRM</h1>
           <p className="text-muted-foreground mt-1">Sign in with your organization account</p>
         </div>
@@ -41,7 +43,7 @@ export default function Auth() {
           </CardHeader>
           <CardContent className="space-y-3">
             <Button variant="outline" onClick={handleGoogleLogin} disabled={loading} className="w-full">{loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}Google SSO</Button>
-            <Button variant="outline" onClick={handleMicrosoftLogin} disabled={loading} className="w-full">{loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}Microsoft SSO</Button>
+            {/* <Button variant="outline" onClick={handleMicrosoftLogin} disabled={loading} className="w-full">{loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}Microsoft SSO</Button> */}
             <p className="text-center text-xs text-muted-foreground pt-1">Roles are assigned by admin after sign-in.</p>
           </CardContent>
         </Card>

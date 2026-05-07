@@ -61,8 +61,8 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
       <SidebarHeader className="border-b border-sidebar-border p-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary text-primary-foreground font-bold shadow-sm">
-            AI
+          <div className="h-10 w-10 shrink-0 flex items-center justify-center overflow-visible">
+            <img src="/logo.svg" alt="Prompt CRM" className="h-10 w-10 object-contain scale-[1.75]" />
           </div>
           {!collapsed && (
             <div className="flex flex-col">

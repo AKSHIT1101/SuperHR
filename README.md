@@ -2,7 +2,7 @@
 
 > **Stop clicking through forms. Start typing what you mean.**
 >
-> Prompt CRM is a multi-tenant CRM where *every* meaningful action — defining your data model, importing contacts, building audiences, sending email & WhatsApp campaigns, planning events, setting reminders — is driven by a natural-language prompt. The AI proposes, the human reviews, the system executes.
+> Prompt CRM is a multi-tenant CRM, where *every* meaningful action — defining your data model, importing contacts, building audiences, sending email & WhatsApp campaigns, planning events, setting reminders — is driven by a natural-language prompt. The AI proposes, the human reviews, the system executes.
 
 ---
 
